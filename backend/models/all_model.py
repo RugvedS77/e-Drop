@@ -15,8 +15,8 @@ from database.postgresConn import Base
 
 # --- ENUMS ---
 class UserRole(str, enum.Enum):
-    dropper = "Dropper"     # Regular User
-    collector = "Collector" # Admin/Driver
+    dropper = "dropper"     # Regular User
+    collector = "collector" # Admin/Driver
 
 class PickupStatus(str, enum.Enum):
     SCHEDULED = "scheduled"

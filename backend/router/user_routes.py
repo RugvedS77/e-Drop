@@ -28,8 +28,7 @@ def create_user(request: UserCreate, db: Session = Depends(get_db)):
         email=request.email,
         hashed_password=hashing.Hash.bcrypt(request.password),
         full_name=request.full_name,
-        role=request.role,
-        business_type=request.business_type
+        role=request.role
     )
     db.add(new_user)
     db.commit()

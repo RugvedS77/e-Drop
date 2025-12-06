@@ -27,31 +27,21 @@ import DropperLayout from './components/layouts/DropperLayout.jsx';
 import CollectorLayout from './components/layouts/CollectorLayout.jsx';
 
 // --- 🔒 ROLE-BASED PROTECTION WRAPPER ---
+
 function ProtectedRoute({ children, allowedRole }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
   const user = useAuthStore((state) => state.user);
   const loading = useAuthStore((state) => state.loading);
 
-  if (loading) {
-    return (
-      <div className="flex h-screen w-full items-center justify-center bg-gray-50">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
-          <span className="text-gray-500 text-sm font-medium">Verifying access...</span>
-        </div>
-      </div>
-    );
-  }
+  if (loading) return <div>Loading...</div>;
 
-  // 1. Not Logged In? -> Redirect to the specific login page for that role
   if (!isAuthenticated) {
     return <Navigate to={`/login/${allowedRole}`} replace />;
   }
 
-  // 2. Logged In but Wrong Role? -> Redirect to Home or Unauthorized
-  // (Prevents a User from typing /processor/dashboard to access Admin panels)
-  if (user?.role !== allowedRole) {
-    console.warn(`Unauthorized access attempt: User role '${user?.role}' tried to access '${allowedRole}' route.`);
+  // 🔴 FIX: Convert both to lowercase before comparing
+  if (user?.role?.toLowerCase() !== allowedRole.toLowerCase()) {
+    console.warn(`Unauthorized: '${user?.role}' tried accessing '${allowedRole}'`);
     return <Navigate to="/" replace />; 
   }
 

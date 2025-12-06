@@ -28,14 +28,19 @@ const DropperLogin = () => {
     setError(null);
     try {
       await login(email, password);
-      // Check state directly after login
+      
+      // 👇 GET THE FRESH USER STATE
       const user = useAuthStore.getState().user;
       
-      if(user && user.role === 'dropper') {
+      // 👇 ADD THIS LINE AND CHECK YOUR BROWSER CONSOLE (F12)
+      console.log("🛑 DEBUG LOGIN USER:", JSON.stringify(user, null, 2)); 
+      
+      if(user && (user.role === 'dropper')) {
          navigate("/dropper/dashboard", { replace: true });
       } else {
-         setError("Access Denied. This account is not a Dropper account.");
-         useAuthStore.getState().logout(); // Logout if wrong role
+         // Show us what the WRONG role was
+         setError(`Access Denied. Your role is: ${user?.role}`);
+         useAuthStore.getState().logout();
       }
     } catch (err) {
       setError(err.message || "Invalid credentials");
@@ -43,7 +48,8 @@ const DropperLogin = () => {
   };
 
   const handleGoogleLogin = () => {
-    const backendUrl = `${API_BASE_URL}/api/auth/login/google`;
+    // ⬇️ UPDATE: Added ?role=dropper to the URL
+    const backendUrl = `${API_BASE_URL}/api/auth/login/google?role=dropper`;
     window.open(backendUrl, "oauth-login", "width=500,height=600");
   };
 
@@ -54,7 +60,7 @@ const DropperLogin = () => {
               const user = loginWithToken(token);
               // We rely on the authStore to decode the token and set the user
               // We need to wait a tick or check the store again, but simpler logic:
-              if (user && user.role === 'dropper') {
+              if (user && user.role === 'dropper' || user.role === 'Dropper') {
                   navigate("/dropper/dashboard", { replace: true });
               } else if (user && user.role !== 'dropper') {
                   setError("Wrong Portal. Please login as a Collector.");
