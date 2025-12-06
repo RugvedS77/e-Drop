@@ -73,7 +73,7 @@ def update_current_user(
         raise HTTPException(status_code=404, detail="User not found")
     
     for key, value in update_data.items():
-        if key in ["full_name", "business_type"]:
+        if key in ["full_name"]:
             setattr(user_to_update, key, value)
             
     db.commit()

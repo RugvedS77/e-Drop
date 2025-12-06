@@ -5,11 +5,12 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from database.postgresConn import engine, Base
 from models import all_model
-from router import user_routes, auth_routes
+from router import user_routes, auth_routes, pickup_routes, collector_routes
 all_model.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="Sample"
+    title="E-Drop Backend API",
+    description="Backend API for E-Drop Waste Collection System"
 )
 
 app.add_middleware(SessionMiddleware, secret_key=os.getenv("SESSION_SECRET") or "change-me")
@@ -35,3 +36,5 @@ def root():
 
 app.include_router(auth_routes.router)
 app.include_router(user_routes.router)
+app.include_router(pickup_routes.router)
+app.include_router(collector_routes.router)

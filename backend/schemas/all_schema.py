@@ -23,7 +23,6 @@ class UserBase(BaseModel):
     email: EmailStr
     full_name: Optional[str] = None
     role: str
-    business_type: Optional[str] = None
 
 class UserCreate(UserBase):
     password: str
@@ -107,6 +106,7 @@ class RoutePoint(BaseModel):
     latitude: float
     longitude: float
     status: PickupStatusEnum
+    order: int  # Sequence in the route
 
 class InventoryUpdate(BaseModel):
     """Used by Collectors to update item status"""

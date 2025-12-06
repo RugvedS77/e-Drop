@@ -8,7 +8,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from sqlalchemy import Enum as SQLAlchemyEnum
-from geoalchemy2 import Geography # REQUIRED for Location features
+from geoalchemy2 import Geography # type: ignore # REQUIRED for Location features
 
 # IMPORTANT: Import the single, shared Base object from your database file
 from database.postgresConn import Base
@@ -44,7 +44,7 @@ class User(Base):
     hashed_password = Column(String, nullable=False)
     full_name = Column(String)
     role = Column(Enum(UserRole), nullable=False)
-    reset_token = Column(String, nullable=True)         
+    reset_token: Column[str] = Column(String, nullable=True)         
     reset_token_expiry = Column(DateTime, nullable=True) 
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 

@@ -174,11 +174,11 @@ def verify_otp(request: VerifyOtpRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="User not found")
 
     # A. Check if OTP matches
-    if user.reset_token != request.otp:
+    if str(user.reset_token) != request.otp:
         raise HTTPException(status_code=400, detail="Invalid OTP")
 
     # B. Check if OTP is expired
-    if not user.reset_token_expiry or user.reset_token_expiry < datetime.utcnow():
+    if not datetime(user.reset_token_expiry) or datetime(user.reset_token_expiry) < datetime.utcnow():
         raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
 
     return {"message": "OTP Verified. Proceed to reset password."}
