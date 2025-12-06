@@ -5,7 +5,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from database.postgresConn import engine, Base
 from models import all_model
-from router import user_routes, auth_routes, pickup_routes, collector_routes, profile_routes
+from router import user_routes, auth_routes, pickup_routes, collector_routes, profile_routes, wallet_routes
 all_model.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
@@ -39,3 +39,4 @@ app.include_router(user_routes.router)
 app.include_router(pickup_routes.router)
 app.include_router(collector_routes.router)
 app.include_router(profile_routes.router)
+app.include_router(wallet_routes.router)

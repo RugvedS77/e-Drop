@@ -18,3 +18,4 @@ geoalchemy2
 alembic
 supabase
 twilio
+Shapely>=1.8.0

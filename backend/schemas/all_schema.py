@@ -98,7 +98,8 @@ class PickupResponse(BaseModel):
     id: int
     status: PickupStatusEnum
     image_url: Optional[str] = None # <--- Added
-    scheduled_time: datetime
+    pickup_date: datetime
+    timeslot: str
     total_credits: int
     message: str
     model_config = ConfigDict(from_attributes=True)

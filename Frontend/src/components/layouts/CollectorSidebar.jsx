@@ -42,7 +42,7 @@ export default function CollectorSidebar() {
                     <div className="bg-blue-600 p-1.5 rounded-lg">
                         <Truck className="h-6 w-6 text-white fill-blue-600" />
                     </div>
-                    <h1 className="text-xl font-bold text-gray-100 tracking-tight">EcoCycle</h1>
+                    <h1 className="text-xl font-bold text-gray-100 tracking-tight">e-Drop</h1>
                 </div>
                 <p className="text-xs text-blue-400 pl-1">Collector Admin</p>
             </div>

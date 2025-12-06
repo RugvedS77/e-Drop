@@ -42,7 +42,7 @@ export default function DropperSidebar() {
                     <div className="bg-green-600 p-1.5 rounded-lg">
                         <Leaf className="h-6 w-6 text-white fill-green-600" />
                     </div>
-                    <h1 className="text-xl font-bold text-gray-100 tracking-tight">EcoCycle</h1>
+                    <h1 className="text-xl font-bold text-gray-100 tracking-tight">e-Drop</h1>
                 </div>
                 <p className="text-xs text-green-400 pl-1">Dropper Portal</p>
             </div>

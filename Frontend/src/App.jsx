@@ -28,7 +28,7 @@ import Settings from './pages/dropper/Settings.jsx';
 
 import CollectorDashboard from './pages/collector/CollectorDashBoard.jsx';
 import InventoryPage from './pages/collector/InventoryPage.jsx';
-//import LogisticsPage from './pages/collector/LogisticsPage.jsx';
+import LogisticsPage from './pages/collector/LogisticsPage.jsx';
 
 // --- Layouts ---
 import DropperLayout from './components/layouts/DropperLayout.jsx';
@@ -110,8 +110,8 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard', element: <CollectorDashboard /> },
       // Future routes:
-       { path: 'inventory', element: <InventoryPage /> },
-      // { path: 'logistics', element: <LogisticsPage /> },
+      { path: 'inventory', element: <InventoryPage /> },
+      { path: 'logistics', element: <LogisticsPage /> },
     ],
   },
 ]);

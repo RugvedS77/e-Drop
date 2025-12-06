@@ -2,7 +2,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime
+from datetime import datetime, time  # <--- CHANGED: Added 'time' here
+import os
 
 # Import your setup
 from database.postgresConn import get_db
@@ -12,6 +13,7 @@ from auth.oauth2 import get_current_user
 from ml_engine.detector import detector
 # from oauth2 import get_current_user # Un-comment this when you have auth setup
 from utils.supabase_storage import upload_file_to_supabase
+from utils.sms_utils import send_sms_alert
 
 router = APIRouter(
     prefix="/api/pickups",
@@ -76,6 +78,7 @@ async def predict_ewaste(file: UploadFile = File(...),
         # --- NEW: Upload to Supabase ---
         # We upload immediately so we can show the user what they scanned 
         # and keep the URL for the next step.
+        
         uploaded_url = upload_file_to_supabase(
             file_bytes=contents, 
             file_name=file.filename, 
@@ -136,19 +139,18 @@ async def predict_ewaste(file: UploadFile = File(...),
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 
-# --- THE BOOKING ENDPOINT ---
+# --- THE BOOKING ENDPOINT (UPDATED WITH TWILIO) ---
 @router.post("/create", response_model= PickupResponse, status_code=status.HTTP_201_CREATED)
 def create_pickup(
     pickup_data: PickupCreate,
     db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user) # Now requires Auth
+    current_user: User = Depends(get_current_user)
 ):
     """
-    Finalizes the booking.
-    Takes the list of items (originally from /scan) and saves them to the DB.
+    Finalizes the booking and sends SMS notification to the Master Collector.
     """
     
-    # 1. Get the Profile ID from the Current User
+    # 1. Get the Profile
     ensure_dropper_role(current_user)
     user_profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
     
@@ -158,8 +160,7 @@ def create_pickup(
             detail="User profile not found. Please contact support."
         )
 
-    # 2. Validate Data Wipe (Security Rule)
-    # If any item is an electronic device, the user MUST confirm data wipe.
+    # 2. Validate Data Wipe
     electronic_keywords = ["laptop", "phone", "tablet", "computer", "tv"]
     has_electronics = any(
         any(keyword in item.item_name.lower() for keyword in electronic_keywords)
@@ -172,15 +173,14 @@ def create_pickup(
             detail="Data wipe confirmation is required for electronic items."
         )
 
-    # 3. Create the Pickup Record (The 'Header')
-    # Converting Lat/Lng to PostGIS format: "POINT(longitude latitude)"
+    # 3. Create the Pickup Record
     location_wkt = f"POINT({pickup_data.longitude} {pickup_data.latitude})"
 
     new_pickup = Pickup(
         profile_id=user_profile.id,
         pickup_date=pickup_data.pickup_date,
         timeslot=pickup_data.timeslot,
-        location=location_wkt, # SQLAlchemy/GeoAlchemy handles the WKT conversion
+        location=location_wkt, 
         address_text=pickup_data.address_text,
         status=PickupStatus.SCHEDULED,
         image_url=pickup_data.image_url
@@ -188,28 +188,73 @@ def create_pickup(
     
     db.add(new_pickup)
     db.commit()
-    db.refresh(new_pickup) # Fetch the new ID (new_pickup.id)
+    db.refresh(new_pickup)
 
-    # 4. Save the Items (The 'Details')
+    # 4. Save the Items
     final_credit_total = 0
+    item_summary_list = [] # For SMS text
     
     for item in pickup_data.items:
         new_item = PickupItem(
             pickup_id=new_pickup.id,
             item_name=item.item_name,
             detected_condition=item.detected_condition,
-            credit_value=item.credit_value # Value agreed upon at booking
+            credit_value=item.credit_value
         )
         db.add(new_item)
         final_credit_total += item.credit_value
+        # Add to summary string like "Laptop (working)"
+        item_summary_list.append(f"{item.item_name} ({item.detected_condition.value})")
 
     db.commit()
 
-    # 5. Return Success Response
+    # --- 5. TWILIO NOTIFICATION (NEW LOGIC) ---
+    try:
+        # Construct message components
+        items_str = ", ".join(item_summary_list)
+        formatted_time = pickup_data.pickup_date.strftime("%d %b, %I:%M %p")
+        
+        # Create the message body
+        msg_body = (
+            f"📢 *New E-Drop Request!* \n"
+            f"📍 Location: {pickup_data.address_text or 'Unknown Location'} \n"
+            f"📦 Items: {items_str} \n"
+            f"⏰ Time: {formatted_time} \n"
+            f"💰 Est. Credits: {final_credit_total}"
+        )
+
+        # Get the Master Collector number from .env
+        master_phone = os.getenv("MASTER_COLLECTOR_PHONE")
+        
+        if master_phone:
+            # Send the SMS
+            sms_result = send_sms_alert(master_phone, msg_body)
+            print(f"✅ Notification Status: {sms_result}")
+        else:
+            print("⚠️ Skipping SMS: MASTER_COLLECTOR_PHONE not set in .env")
+            
+    except Exception as e:
+        # We log the error but DO NOT crash the request. 
+        # The user's pickup is saved successfully, even if SMS fails.
+        print(f"❌ SMS Notification Failed: {str(e)}")
+
+    hour_offset = 9 # Default to 9 AM (Morning)
+    if new_pickup.timeslot and "Afternoon" in new_pickup.timeslot:
+        hour_offset = 13 # 1 PM
+    elif new_pickup.timeslot and "Evening" in new_pickup.timeslot:
+        hour_offset = 17 # 5 PM
+
+    # datetime.combine merges the Date object from DB with our calculated Time object
+    real_scheduled_time = datetime.combine(new_pickup.pickup_date, time(hour_offset, 0))
+
+
+    # 6. Return Success Response
     return PickupResponse(
         id=new_pickup.id,
         status=new_pickup.status,
-        scheduled_time=new_pickup.scheduled_time,
+        # scheduled_time=real_scheduled_time, # Now passing a valid datetime object
+        pickup_date=new_pickup.pickup_date,
+        timeslot=new_pickup.timeslot,
         total_credits=final_credit_total,
         message="Pickup scheduled! A Collector has been notified.",
         image_url=new_pickup.image_url

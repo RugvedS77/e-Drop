@@ -7,7 +7,6 @@ import {
 import { useAuthStore } from '../../authStore'; 
 
 // --- Configuration ---
-// Ensure this matches your backend URL
 const API_BASE_URL = "http://localhost:8000"; 
 
 const categoryIcons = {
@@ -19,18 +18,18 @@ const categoryIcons = {
 };
 
 export default function ScanItem() {
-  const { user, token } = useAuthStore(); // Assuming 'token' is available in your store
+  const { user, token } = useAuthStore();
   
   // --- State Management ---
   const [step, setStep] = useState('upload'); // 'upload' | 'analyzing' | 'result'
   const [dragActive, setDragActive] = useState(false);
   const [uploadedImagePreview, setUploadedImagePreview] = useState(null);
-  const [lastScannedImageUrl, setLastScannedImageUrl] = useState(null); // URL from Supabase
+  const [lastScannedImageUrl, setLastScannedImageUrl] = useState(null);
   
   // Detection State
-  const [detectedItems, setDetectedItems] = useState([]); // List from backend
+  const [detectedItems, setDetectedItems] = useState([]);
   const [currentItemIndex, setCurrentItemIndex] = useState(0);
-  const [condition, setCondition] = useState('working'); // Default
+  const [condition, setCondition] = useState('working');
   
   // Cart State
   const [cart, setCart] = useState([]);
@@ -40,7 +39,7 @@ export default function ScanItem() {
   const [pickupDate, setPickupDate] = useState('');
   const [pickupTime, setPickupTime] = useState('');
   
-  // Missing Backend Fields State
+  // Location & Address State
   const [address, setAddress] = useState('');
   const [location, setLocation] = useState({ lat: null, lng: null });
   const [locationLoading, setLocationLoading] = useState(false);
@@ -56,7 +55,6 @@ export default function ScanItem() {
   const handleFile = async (file) => {
     if (!file) return;
 
-    // Show preview immediately
     const reader = new FileReader();
     reader.onload = (e) => setUploadedImagePreview(e.target.result);
     reader.readAsDataURL(file);
@@ -87,11 +85,9 @@ export default function ScanItem() {
       }
 
       setDetectedItems(detected_items);
-      setLastScannedImageUrl(image_url); // Store the Supabase URL
+      setLastScannedImageUrl(image_url);
       setCurrentItemIndex(0);
       
-      // Set initial condition based on backend confidence/logic
-      // Backend sends: SCRAP, REPAIRABLE, WORKING. We map to frontend state.
       const initialCond = detected_items[0].condition.toLowerCase();
       setCondition(initialCond === 'scrap' ? 'scrap' : 'working');
       
@@ -107,21 +103,17 @@ export default function ScanItem() {
   // --- 2. Cart Logic ---
   const addToCart = () => {
     const currentItem = detectedItems[currentItemIndex];
-    
-    // Calculate value based on user selected condition vs detected base value
-    // Note: In your backend, 'estimated_value' is static per item type. 
-    // You might want to adjust logic here if condition changes price.
     let finalValue = currentItem.estimated_value;
+    
     if (condition === 'scrap' && currentItem.estimated_value > 0) {
-        finalValue = Math.round(currentItem.estimated_value * 0.5); // Example: Scrap is 50% value
+        finalValue = Math.round(currentItem.estimated_value * 0.5);
     }
 
     const finalItem = {
       ...currentItem,
-      detected_condition: condition.toUpperCase(), // Send back as Enum string
+      detected_condition: condition.toUpperCase(),
       value: finalValue,
       cartId: Date.now(),
-      // We keep the image URL associated with the batch
       imageUrl: lastScannedImageUrl 
     };
 
@@ -177,52 +169,60 @@ export default function ScanItem() {
     );
   };
 
-  // --- 5. Submit Booking (Create Pickup) ---
+  // --- 5. Submit Booking (CORRECTED) ---
   const handleBooking = async () => {
+    // 1. Validation
     if (!pickupDate || !pickupTime || !address || !location.lat) {
       alert("Please fill in all details including location and address.");
       return;
     }
 
-    // Combine Date and Time
-    // Rudimentary parsing, assumes 'Morning' etc is not valid ISO. 
-    // For specific times, you'd want a real time picker. 
-    // Here we just use the Date + 09:00:00 as a placeholder if using "Morning"
-    let timeStr = "09:00:00"; 
-    if(pickupTime.includes("Afternoon")) timeStr = "13:00:00";
-    if(pickupTime.includes("Evening")) timeStr = "17:00:00";
-    
-    const isoDateTime = `${pickupDate}T${timeStr}`;
-
     setIsSubmitting(true);
 
+    // Helper: Extract simple timeslot (e.g., "Morning" from "Morning (9 AM - 12 PM)")
+    // If your backend expects the FULL string, remove .split(' ')[0]
+    const simpleTimeslot = pickupTime.split(' ')[0]; 
+
+    // 2. Construct Payload matching Backend 'PickupCreate' Schema
     const payload = {
       items: cart.map(item => ({
-        item_name: item.item, // Backend expects 'item_name'
-        detected_condition: item.detected_condition,
+        item_name: item.item,            
+        // FIX: Ensure condition is lowercase to match typical Python Enums
+        detected_condition: item.detected_condition.toLowerCase(), 
         credit_value: item.value
       })),
-      scheduled_time: isoDateTime,
-      latitude: location.lat,
-      longitude: location.lng,
-      address_text: address,
-      data_wipe_confirmed: dataWipeConfirmed,
-      // We use the image from the last item scanned, or you can manage multiple images.
-      // Current backend schema suggests one image per pickup header.
-      image_url: cart.length > 0 ? cart[0].imageUrl : "" 
+      pickup_date: pickupDate,            
+      timeslot: simpleTimeslot,          // FIX: Sending "Morning" instead of full string
+      latitude: location.lat,             
+      longitude: location.lng,            
+      address_text: address,              
+      data_wipe_confirmed: dataWipeConfirmed, 
+      // FIX: Send null if no image, empty string "" often fails URL validation
+      image_url: cart.length > 0 ? cart[0].imageUrl : null 
     };
 
     try {
+      console.log("Sending Payload:", payload); // Debug: Check console to see what is being sent
       await axios.post(`${API_BASE_URL}/api/pickups/create`, payload, getAuthHeaders());
       alert(`Pickup Scheduled successfully!`);
+      
+      // Reset State
       setShowScheduleModal(false);
       setCart([]);
       setAddress('');
       setLocation({lat: null, lng: null});
+      setPickupDate('');
+      setPickupTime('');
       setDataWipeConfirmed(false);
     } catch (error) {
-      console.error(error);
-      alert(error.response?.data?.detail || "Failed to schedule pickup.");
+      console.error("Full Error Object:", error);
+      // This will print the specific field that failed validation
+      if (error.response?.data?.detail) {
+        console.error("Validation Error Details:", error.response.data.detail);
+        alert(`Validation Error: ${JSON.stringify(error.response.data.detail)}`);
+      } else {
+        alert("Failed to schedule pickup. Check console for details.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -231,8 +231,6 @@ export default function ScanItem() {
   // --- Derived Stats ---
   const totalCartValue = cart.reduce((sum, item) => sum + item.value, 0);
   const totalCO2 = (cart.length * 2.5).toFixed(1); 
-
-  // --- Render Helpers ---
   const currentDetectedItem = detectedItems[currentItemIndex];
 
   return (
@@ -329,7 +327,6 @@ export default function ScanItem() {
                     <div>
                       <p className="text-xs text-gray-400 uppercase font-bold tracking-wider">Estimated Value</p>
                       <p className="text-4xl font-extrabold text-green-600">
-                         {/* Simple logic: if user says scrap, halve the AI estimated price */}
                          {condition === 'scrap' ? Math.round(currentDetectedItem.estimated_value * 0.5) : currentDetectedItem.estimated_value}
                          <span className="text-lg text-gray-400 font-medium"> Credits</span>
                       </p>
@@ -414,7 +411,6 @@ export default function ScanItem() {
             )}
           </div>
         </div>
-
       </div>
 
       {/* --- Schedule Modal --- */}
@@ -450,7 +446,7 @@ export default function ScanItem() {
                 </div>
               </div>
 
-              {/* Location - Required by Backend */}
+              {/* Location */}
               <div>
                  <label className="block text-sm font-semibold text-gray-700 mb-2">Pickup Location</label>
                  <div className="flex gap-2">
@@ -465,7 +461,7 @@ export default function ScanItem() {
                  </div>
               </div>
 
-              {/* Address - Required by Backend */}
+              {/* Address */}
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-2">Full Address</label>
                 <textarea 
@@ -477,7 +473,7 @@ export default function ScanItem() {
                 />
               </div>
 
-              {/* Data Wipe Confirmation - Required by Backend */}
+              {/* Data Wipe Confirmation */}
               <div className="bg-yellow-50 p-4 rounded-xl border border-yellow-100">
                  <div className="flex gap-3 items-start">
                     <input 
@@ -511,7 +507,6 @@ export default function ScanItem() {
           </div>
         </div>
       )}
-
     </div>
   );
 }
