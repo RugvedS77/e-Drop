@@ -1,102 +1,114 @@
-# routers/collector_routes.py
+# router/collector_routes.py
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from typing import List
 from sqlalchemy import func
-from geoalchemy2.elements import WKTElement # type: ignore
 
 from database.postgresConn import get_db
 from models import all_model
 from schemas import all_schema
+from auth.oauth2 import get_current_user
 
 router = APIRouter(
-    prefix="/api/v1/collector",
+    prefix="/api/collector",
     tags=["Collector (Admin) Actions"]
 )
 
-# --- 1. ROUTE OPTIMIZATION ---
-# Corresponds to "The Route Optimization Endpoint" in PDF 
-@router.get("/routes", response_model=list[all_schema.RoutePoint])
-def get_optimized_routes(
-    lat: float, 
-    lng: float,
-    radius_km: int = 10,
-    db: Session = Depends(get_db)
+# --- HELPER: Role Check ---
+def ensure_collector_role(user: all_model.User):
+    """Ensures only Collectors can access these routes."""
+    if user.role != all_model.UserRole.collector:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Only Collectors can perform this action."
+        )
+
+# --- 1. VIEW PENDING PICKUPS (The Map Data) ---
+@router.get("/pending", response_model=List[all_schema.PickupResponse])
+def get_pending_pickups(
+    db: Session = Depends(get_db),
+    current_user: all_model.User = Depends(get_current_user)
 ):
     """
-    Finds all 'SCHEDULED' pickups within X km of the driver's current location.
-    Sorts them by distance (Nearest Neighbor).
+    Returns all 'scheduled' pickups with calculated credit totals.
     """
-    user_location = WKTElement(f"POINT({lng} {lat})", srid=4326)
-
-    # PostGIS Query: ST_DWithin and ST_Distance
-    # Note: 1 degree approx 111km, but it's better to use ST_DistanceSphere for meters.
-    # For simplicity with the Geography type, we can use simple distance sorting.
+    ensure_collector_role(current_user)
     
+    # 1. Fetch from DB
     pickups = db.query(all_model.Pickup).filter(
         all_model.Pickup.status == all_model.PickupStatus.SCHEDULED
-    ).order_by(
-        all_model.Pickup.location.distance_centroid(user_location)
-    ).limit(20).all()
-
-    # Convert to schema
-    routes = []
-    for i, p in enumerate(pickups):
-        # Extract lat/lng from the Geometry object (requires parsing or using ST_X/ST_Y in query)
-        # For simplicity in this snippet, we assume logic to extract coords exists or we fetch separately.
-        # Below is a simplified assumption that p.location is accessible.
+    ).all()
+    
+    # 2. Map DB Objects to Pydantic Schema manually
+    response_list = []
+    
+    for p in pickups:
+        # Calculate total value from related items
+        total_val = sum(item.credit_value for item in p.items)
         
-        # Real-world: You often need `db.query(Pickup, func.ST_X(Pickup.location), ...)`
-        
-        point_data = all_schema.RoutePoint(
-            pickup_id=p.id,
-            # Placeholder coordinates - in production use ST_AsGeoJSON
-            latitude=0.0, 
-            longitude=0.0,
-            status=p.status,
-            order=i+1
+        response_list.append(
+            all_schema.PickupResponse(
+                id=p.id,
+                status=p.status,
+                scheduled_time=p.scheduled_time,
+                total_credits=total_val,  # <--- calculated field
+                message="Ready for collection" # <--- required field
+            )
         )
-        routes.append(point_data)
+    
+    return response_list
 
-    return routes
-
-
-# --- 2. COMPLETE PICKUP & GAMIFICATION ---
-# Corresponds to "The Gamification Endpoint" in PDF [cite: 108]
-@router.post("/complete/{pickup_id}")
+# --- 2. COMPLETE PICKUP (The 'Pick It Up' Action) ---
+@router.post("/pickup/{pickup_id}/complete")
 def complete_pickup(
     pickup_id: int,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: all_model.User = Depends(get_current_user)
 ):
     """
-    1. Mark pickup as COLLECTED.
-    2. Calculate total credits.
-    3. Update User's Carbon Balance (Gamification).
+    1. Marks pickup as COLLECTED.
+    2. Calculates total value of items.
+    3. Transfers credits to the User's Carbon Wallet.
+    Source: [cite: 111, 112, 113, 114, 115]
     """
-    # Fetch Pickup
-    pickup = db.query(all_model.Pickup).filter(all_model.Pickup.id == pickup_id).first()
-    if not pickup:
-        raise HTTPException(status_code=404, detail="Pickup not found")
-        
-    if pickup.status == all_model.PickupStatus.COLLECTED:
-        return {"message": "Already collected"}
+    ensure_collector_role(current_user)
 
-    # Update Status
+    # A. Find the Pickup
+    pickup = db.query(all_model.Pickup).filter(all_model.Pickup.id == pickup_id).first()
+    
+    if not pickup:
+        raise HTTPException(status_code=404, detail="Pickup request not found.")
+
+    if pickup.status == all_model.PickupStatus.COLLECTED:
+        raise HTTPException(status_code=400, detail="This pickup has already been collected.")
+
+    # B. Calculate Total Credits from the items in this pickup
+    # We sum the 'credit_value' column of all related PickupItems
+    total_credits = 0
+    for item in pickup.items:
+        total_credits += item.credit_value
+
+    # C. Update Pickup Status
     pickup.status = all_model.PickupStatus.COLLECTED
     
-    # Calculate Credits [cite: 114]
-    total_credits = sum([item.credit_value for item in pickup.items])
+    # D. Credit the User (Gamification)
+    # We find the profile linked to this pickup
+    user_profile = db.query(all_model.Profile).filter(all_model.Profile.id == pickup.profile_id).first()
     
-    # Update User Profile [cite: 115]
-    profile = db.query(all_model.Profile).filter(all_model.Profile.id == pickup.profile_id).first()
-    if profile:
-        profile.carbon_balance += total_credits
-        # Assuming 1 credit = 0.5kg CO2 saved (Example logic)
-        profile.co2_saved += (total_credits * 0.5)
+    if user_profile:
+        # 1. Add Credits (Carbon Balance)
+        user_profile.carbon_balance += total_credits
+        
+        # 2. Update CO2 Stats (Assumption: 1 credit = 0.1kg CO2 saved, or arbitrary logic)
+        # In a real app, each item type would have a specific CO2 multiplier.
+        estimated_co2 = total_credits * 0.1 
+        user_profile.co2_saved += estimated_co2
         
     db.commit()
     
     return {
-        "status": "success", 
+        "message": "Pickup completed successfully",
         "credits_awarded": total_credits,
-        "new_balance": profile.carbon_balance
+        "new_status": pickup.status
     }

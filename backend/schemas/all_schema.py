@@ -43,6 +43,7 @@ class TokenWithUser(BaseModel):
     user: UserResponse 
 
 class TokenData(BaseModel):
+    id: Optional[int] = None
     username: Optional[str] = None
 
 class ForgotPasswordRequest(BaseModel):
@@ -96,6 +97,30 @@ class PickupResponse(BaseModel):
     scheduled_time: datetime
     total_credits: int
     message: str
+    model_config = ConfigDict(from_attributes=True)
+
+# --- PROFILE SCHEMAS ---
+
+class ProfileBase(BaseModel):
+    carbon_balance: int = 0
+    co2_saved: float = 0.0
+
+class ProfileCreate(ProfileBase):
+    # Used internally when registering a user
+    user_id: int
+
+class ProfileUpdate(BaseModel):
+    # Only Admin/System should update credits, but we define it here
+    carbon_balance: Optional[int] = None
+    co2_saved: Optional[float] = None
+
+class ProfileResponse(ProfileBase):
+    id: int
+    user_id: int
+    
+    # We can also nest the User info here if needed
+    # user: UserResponse 
+
     model_config = ConfigDict(from_attributes=True)
 
 # --- NEW: COLLECTOR / DASHBOARD SCHEMAS ---

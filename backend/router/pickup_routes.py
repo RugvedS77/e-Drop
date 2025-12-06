@@ -6,29 +6,65 @@ from datetime import datetime
 
 # Import your setup
 from database.postgresConn import get_db
-from models import all_model
-from schemas import all_schema
+from models.all_model import Pickup, PickupItem, Profile, User, PickupStatus, UserRole
+from schemas.all_schema import ScanResponse, DetectedItem, PickupCreate, PickupResponse, ItemConditionEnum
+from auth.oauth2 import get_current_user
 from ml_engine.detector import detector
 # from oauth2 import get_current_user # Un-comment this when you have auth setup
 
 router = APIRouter(
-    prefix="/api/v1/pickups",
+    prefix="/api/pickups",
     tags=["Dropper (User) Actions"]
 )
 
+ALLOWED_E_WASTE = {
+    "laptop", 
+    "cell phone", 
+    "mouse", 
+    "keyboard", 
+    "tv", 
+    "monitor", 
+    "remote",
+    "tablet"
+}
+
 PRICE_LIST = {
     "laptop": 500,
-    "phone": 300,
+    "cell phone": 300,
     "mouse": 50,
     "keyboard": 80,
+    "tv": 400,
     "monitor": 200,
-    "apple": 5, # Just in case your model is detecting fruit while testing!
+    "remote": 30,
+    "tablet": 250
 }
+
+def ensure_dropper_role(user: User):
+    """Ensures only Collectors can access these routes."""
+    if user.role != UserRole.dropper:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Only dropper can perform this action."
+        )
+    
 # --- 1. AI SCANNING ENDPOINT ---
-# Corresponds to "The AI Detection Endpoint" in PDF [cite: 88]
-@router.post("/scan", response_model=all_schema.ScanResponse)
-async def predict_ewaste(file: UploadFile = File(...)):
+# Corresponds to "The AI Detection Endpoint" in PDF 
+@router.post("/scan", response_model=ScanResponse)
+async def predict_ewaste(file: UploadFile = File(...),
+                         db: Session = Depends(get_db),
+                          current_user: User = Depends(get_current_user)):
     # 1. Validate file type
+    ensure_dropper_role(current_user)
+    user_profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
+    
+    if not user_profile:
+        # If profile missing (rare edge case), create one or raise error
+        # For now, we raise error to keep data clean
+        raise HTTPException(
+            status_code=404, 
+            detail="User profile not found. Please contact support."
+        )
+    
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
     
@@ -51,6 +87,10 @@ async def predict_ewaste(file: UploadFile = File(...)):
         for obj in detections:
             # Extract data from YOLO format
             item_name = obj.get("class", "unknown")
+
+            if item_name not in ALLOWED_E_WASTE:
+                continue
+
             confidence = obj.get("confidence", 0.0)
 
             # Assign Value (Look up in dict, default to 10 if not found)
@@ -58,14 +98,14 @@ async def predict_ewaste(file: UploadFile = File(...)):
             
             # Assign Condition (Mock logic: High confidence = Good condition)
             # In the future, you can train a second model to detect 'scratches'
-            condition = all_schema.ItemConditionEnum.WORKING
+            condition = ItemConditionEnum.WORKING
             if confidence < 0.6:
-                condition = all_schema.ItemConditionEnum.SCRAP
+                condition = ItemConditionEnum.SCRAP
             elif confidence < 0.8:
-                condition = all_schema.ItemConditionEnum.REPAIRABLE
+                condition = ItemConditionEnum.REPAIRABLE
 
             # Create the Pydantic Object
-            detected_item = all_schema.DetectedItem(
+            detected_item = DetectedItem(
                 item=item_name,
                 condition=condition,
                 estimated_value=value,
@@ -85,63 +125,78 @@ async def predict_ewaste(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 
-# --- 2. BOOKING ENDPOINT ---
-# Corresponds to "The Booking Endpoint" in PDF [cite: 96]
-@router.post("/create", response_model=all_schema.PickupResponse, status_code=status.HTTP_201_CREATED)
+# --- THE BOOKING ENDPOINT ---
+@router.post("/create", response_model= PickupResponse, status_code=status.HTTP_201_CREATED)
 def create_pickup(
-    pickup_data: all_schema.PickupCreate,
+    pickup_data: PickupCreate,
     db: Session = Depends(get_db),
-    # current_user: all_model.User = Depends(get_current_user)
+    current_user: User = Depends(get_current_user) # Now requires Auth
 ):
-    # For now, hardcode user_id until Auth is connected
-    # profile = current_user.profile 
-    # If no profile exists, handle error...
+    """
+    Finalizes the booking.
+    Takes the list of items (originally from /scan) and saves them to the DB.
+    """
     
-    # 1. Validate Data Wipe (PDF Requirement) [cite: 28]
-    has_electronics = any(i.item_name.lower() in ['laptop', 'phone'] for i in pickup_data.items)
+    # 1. Get the Profile ID from the Current User
+    ensure_dropper_role(current_user)
+    user_profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
+    
+    if not user_profile:
+        raise HTTPException(
+            status_code=404, 
+            detail="User profile not found. Please contact support."
+        )
+
+    # 2. Validate Data Wipe (Security Rule)
+    # If any item is an electronic device, the user MUST confirm data wipe.
+    electronic_keywords = ["laptop", "phone", "tablet", "computer", "tv"]
+    has_electronics = any(
+        any(keyword in item.item_name.lower() for keyword in electronic_keywords)
+        for item in pickup_data.items
+    )
+    
     if has_electronics and not pickup_data.data_wipe_confirmed:
         raise HTTPException(
             status_code=400, 
-            detail="You must confirm data wipe for electronic items."
+            detail="Data wipe confirmation is required for electronic items."
         )
 
-    # 2. Mock Profile ID for testing (replace with real logic)
-    # Ensure a profile exists for this user first!
-    mock_profile_id = 1 
-
-    # 3. Create Pickup Record with PostGIS Location
-    # WKT Element: "POINT(longitude latitude)"
+    # 3. Create the Pickup Record (The 'Header')
+    # Converting Lat/Lng to PostGIS format: "POINT(longitude latitude)"
     location_wkt = f"POINT({pickup_data.longitude} {pickup_data.latitude})"
 
-    new_pickup = all_model.Pickup(
-        profile_id=mock_profile_id,
+    new_pickup = Pickup(
+        profile_id=user_profile.id,
         scheduled_time=pickup_data.scheduled_time,
-        location=location_wkt, # SQLAlchemy/GeoAlchemy handles the conversion
+        location=location_wkt, # SQLAlchemy/GeoAlchemy handles the WKT conversion
         address_text=pickup_data.address_text,
-        status=all_model.PickupStatus.SCHEDULED
+        status=PickupStatus.SCHEDULED
     )
+    
     db.add(new_pickup)
     db.commit()
-    db.refresh(new_pickup)
+    db.refresh(new_pickup) # Fetch the new ID (new_pickup.id)
 
-    # 4. Save Items to normalized table (Improved Database Schema)
-    total_credits = 0
+    # 4. Save the Items (The 'Details')
+    final_credit_total = 0
+    
     for item in pickup_data.items:
-        new_item = all_model.PickupItem(
+        new_item = PickupItem(
             pickup_id=new_pickup.id,
             item_name=item.item_name,
             detected_condition=item.detected_condition,
-            credit_value=item.credit_value
+            credit_value=item.credit_value # Value agreed upon at booking
         )
-        total_credits += item.credit_value
         db.add(new_item)
-    
+        final_credit_total += item.credit_value
+
     db.commit()
 
-    return all_schema.PickupResponse(
+    # 5. Return Success Response
+    return PickupResponse(
         id=new_pickup.id,
         status=new_pickup.status,
         scheduled_time=new_pickup.scheduled_time,
-        total_credits=total_credits,
-        message="Pickup scheduled successfully. A Collector will be assigned soon."
+        total_credits=final_credit_total,
+        message="Pickup scheduled! A Collector has been notified."
     )
