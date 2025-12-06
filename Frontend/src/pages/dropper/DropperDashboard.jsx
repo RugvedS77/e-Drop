@@ -81,7 +81,7 @@ const DropperDashboard = () => {
 
       {/* --- Quick Actions --- */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Link to="/generator/scan" className="group relative overflow-hidden bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all">
+        <Link to="/dropper/scan" className="group relative overflow-hidden bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all">
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Camera className="w-24 h-24 text-blue-600" />
           </div>
@@ -97,7 +97,7 @@ const DropperDashboard = () => {
           </div>
         </Link>
 
-        <Link to="/generator/schedule" className="group relative overflow-hidden bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all">
+        <Link to="/dropper/schedule" className="group relative overflow-hidden bg-white p-8 rounded-2xl shadow-sm border border-gray-100 hover:shadow-md transition-all">
           <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
             <Calendar className="w-24 h-24 text-green-600" />
           </div>
@@ -120,7 +120,7 @@ const DropperDashboard = () => {
           <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2">
             <History className="w-5 h-5 text-gray-400" /> Recent Activity
           </h3>
-          <Link to="/generator/history" className="text-sm text-blue-600 hover:underline">View All</Link>
+          <Link to="/dropper/history" className="text-sm text-blue-600 hover:underline">View All</Link>
         </div>
         
         <div className="overflow-x-auto">

@@ -61,8 +61,8 @@ export default function DropperSidebar() {
                     <NavLink to="/dropper/scan" icon={<Camera size={20} />}>
                         Scan E-Waste
                     </NavLink>
-                    <NavLink to="/dropper/schedule" icon={<Calendar size={20} />}>
-                        Schedule Pickup
+                    <NavLink to="/dropper/guide" icon={<Calendar size={20} />}>
+                        Data Wipe Guide
                     </NavLink>
                 </div>
 

@@ -20,6 +20,12 @@ import CollectorSignup from './pages/auth/CollectorSignup.jsx';
 
 // --- Dashboards ---
 import DropperDashboard from './pages/dropper/DropperDashboard.jsx';
+import ScanItem from './pages/dropper/ScanItem.jsx';
+import DataWipeGuide from './pages/dropper/DataWipeGuide.jsx';
+import CarbonWallet from './pages/dropper/CarbonWallet.jsx';
+import RecycleHistory from './pages/dropper/RecycleHistory.jsx';
+import Settings from './pages/dropper/Settings.jsx';
+
 import CollectorDashboard from './pages/collector/CollectorDashBoard.jsx';
 
 // --- Layouts ---
@@ -82,8 +88,11 @@ const router = createBrowserRouter([
       { index: true, element: <Navigate to="dashboard" replace /> },
       { path: 'dashboard', element: <DropperDashboard /> },
       // Future routes:
-      // { path: 'scan', element: <ScanItemPage /> },
-      // { path: 'wallet', element: <WalletPage /> },
+      { path: 'scan', element: <ScanItem /> },
+      { path: 'guide', element: <DataWipeGuide /> },
+      { path: 'wallet', element: <CarbonWallet /> },
+      { path: 'history', element: <RecycleHistory /> },
+      { path: 'settings', element: <Settings /> },
     ],
   },
 

@@ -19,8 +19,8 @@ const DropperLogin = () => {
   const loginWithToken = useAuthStore((state) => state.loginWithToken);
   const isLoading = useAuthStore((state) => state.loading);
   
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("mayuresh@gmail.com");
+  const [password, setPassword] = useState("123456");
   const [error, setError] = useState(null);
 
   const handleLogin = async (e) => {
