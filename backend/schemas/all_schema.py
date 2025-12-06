@@ -70,6 +70,7 @@ class DetectedItem(BaseModel):
 class ScanResponse(BaseModel):
     detected_items: List[DetectedItem]
     total_estimated_credits: int
+    image_url: Optional[str] = None # <--- Added
 
 # --- NEW: PICKUP / DROP SCHEMAS ---
 
@@ -81,7 +82,8 @@ class PickupItemCreate(BaseModel):
 
 class PickupCreate(BaseModel):
     """Payload for creating a new Drop request"""
-    scheduled_time: datetime
+    pickup_date: datetime
+    timeslot: str
     latitude: float = Field(..., description="Latitude of the pickup location")
     longitude: float = Field(..., description="Longitude of the pickup location")
     address_text: Optional[str] = None
@@ -89,11 +91,13 @@ class PickupCreate(BaseModel):
     
     # Confirmation of data wipe (Required for electronics)
     data_wipe_confirmed: bool
+    image_url: Optional[str] = None # <--- Added
 
 class PickupResponse(BaseModel):
     """Response after successful booking"""
     id: int
     status: PickupStatusEnum
+    image_url: Optional[str] = None # <--- Added
     scheduled_time: datetime
     total_credits: int
     message: str
@@ -137,3 +141,11 @@ class InventoryUpdate(BaseModel):
     """Used by Collectors to update item status"""
     processing_status: str
     warehouse_location: Optional[str] = None
+    
+
+# --- NEW: LOGISTICS / ALERTS ---
+class AlertRequest(BaseModel):
+    """Payload for notifying the driver/collector"""
+    driver_name: str
+    location_area: str
+    target_phone: str # Must be verified on Twilio if using Free Tier

@@ -12,7 +12,7 @@ from database.postgresConn import get_db
 from models.all_model import User as UserModel, UserRole
 from schemas.all_schema import TokenWithUser, ForgotPasswordRequest, VerifyOtpRequest, ResetPasswordRequest
 from auth import hashing, token
-from utilis.email_otp import send_otp_email
+from utils.email_otp import send_otp_email
 
 # --- IMPORT THE PROFILE HELPER ---
 from router.profile_routes import create_profile_for_user 

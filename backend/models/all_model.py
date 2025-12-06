@@ -79,7 +79,8 @@ class Pickup(Base):
     profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
     
     status = Column(Enum(PickupStatus), default=PickupStatus.SCHEDULED)
-    scheduled_time = Column(DateTime(timezone=True), nullable=False)
+    pickup_date = Column(Date, nullable=True)  # Optional specific date field
+    timeslot = Column(String, nullable=True)  # e.g., "Morning", "Afternoon"
     
     # GEO-SPATIAL COLUMN: Stores (Latitude, Longitude) efficiently
     # Ensure you have 'CREATE EXTENSION postgis;' run in your DB
@@ -87,6 +88,9 @@ class Pickup(Base):
     
     # For address display purposes (optional but helpful)
     address_text = Column(String, nullable=True)
+     # NEW COLUMN
+    image_url = Column(String, nullable=True)
+    
     
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     

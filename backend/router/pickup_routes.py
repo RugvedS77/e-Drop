@@ -11,6 +11,7 @@ from schemas.all_schema import ScanResponse, DetectedItem, PickupCreate, PickupR
 from auth.oauth2 import get_current_user
 from ml_engine.detector import detector
 # from oauth2 import get_current_user # Un-comment this when you have auth setup
+from utils.supabase_storage import upload_file_to_supabase
 
 router = APIRouter(
     prefix="/api/pickups",
@@ -52,7 +53,7 @@ def ensure_dropper_role(user: User):
 @router.post("/scan", response_model=ScanResponse)
 async def predict_ewaste(file: UploadFile = File(...),
                          db: Session = Depends(get_db),
-                          current_user: User = Depends(get_current_user)):
+                         current_user: User = Depends(get_current_user)):
     # 1. Validate file type
     ensure_dropper_role(current_user)
     user_profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
@@ -71,6 +72,15 @@ async def predict_ewaste(file: UploadFile = File(...),
     try:
         # 2. Read and Predict
         contents = await file.read()
+
+        # --- NEW: Upload to Supabase ---
+        # We upload immediately so we can show the user what they scanned 
+        # and keep the URL for the next step.
+        uploaded_url = upload_file_to_supabase(
+            file_bytes=contents, 
+            file_name=file.filename, 
+            content_type=file.content_type
+        )
         
         # --- YOUR AI PREDICTION CALL ---
         detections = await detector.predict(contents)
@@ -118,7 +128,8 @@ async def predict_ewaste(file: UploadFile = File(...),
         # 5. Return the exact structure defined in ScanResponse
         return {
             "detected_items": mapped_items,
-            "total_estimated_credits": total_credits
+            "total_estimated_credits": total_credits,
+            "image_url": uploaded_url
         }
         
     except Exception as e:
@@ -167,10 +178,12 @@ def create_pickup(
 
     new_pickup = Pickup(
         profile_id=user_profile.id,
-        scheduled_time=pickup_data.scheduled_time,
+        pickup_date=pickup_data.pickup_date,
+        timeslot=pickup_data.timeslot,
         location=location_wkt, # SQLAlchemy/GeoAlchemy handles the WKT conversion
         address_text=pickup_data.address_text,
-        status=PickupStatus.SCHEDULED
+        status=PickupStatus.SCHEDULED,
+        image_url=pickup_data.image_url
     )
     
     db.add(new_pickup)
@@ -198,5 +211,6 @@ def create_pickup(
         status=new_pickup.status,
         scheduled_time=new_pickup.scheduled_time,
         total_credits=final_credit_total,
-        message="Pickup scheduled! A Collector has been notified."
+        message="Pickup scheduled! A Collector has been notified.",
+        image_url=new_pickup.image_url
     )
