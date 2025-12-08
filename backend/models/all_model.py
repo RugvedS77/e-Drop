@@ -1,22 +1,24 @@
-# models/all_model.py
 
 import enum
 from sqlalchemy import (
     Column, Integer, String, Float, Date, Enum,
-    ForeignKey, DateTime, Text, Numeric, Boolean
+    ForeignKey, DateTime, Text, Boolean
 )
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
-from sqlalchemy import Enum as SQLAlchemyEnum
-from geoalchemy2 import Geography # type: ignore # REQUIRED for Location features
+from typing import Optional
+from geoalchemy2 import Geography # Required for PostGIS
 
-# IMPORTANT: Import the single, shared Base object from your database file
+# Import the single, shared Base object
 from database.postgresConn import Base
 
-# --- ENUMS ---
+# ==========================================
+# 1. ENUMS
+# ==========================================
+
 class UserRole(str, enum.Enum):
-    dropper = "dropper"     # Regular User
-    collector = "collector" # Admin/Driver
+    dropper = "Dropper"
+    collector = "Collector"
 
 class PickupStatus(str, enum.Enum):
     SCHEDULED = "scheduled"
@@ -30,48 +32,64 @@ class ItemCondition(str, enum.Enum):
     REPAIRABLE = "repairable"
     SCRAP = "scrap"
 
-class ProcessingStatus(str, enum.Enum):
-    PENDING = "pending"
+class InventoryStatus(str, enum.Enum):
+    PENDING = "pending"         # Initial state (optional)
+    RECEIVED = "received"       # Arrived at Warehouse
     REFURBISHING = "refurbishing"
     RECYCLED = "recycled"
 
-# --- MODELS ---
+class CertificateType(str, enum.Enum):
+    INDIVIDUAL = "individual"
+    CORPORATE = "corporate"
+
+class TransactionType(str, enum.Enum):
+    EARN = "earn"       # From Pickups
+    REDEEM = "redeem"   # Buying rewards
+    ADJUSTMENT = "adjustment"
+
+# ==========================================
+# 2. MODELS
+# ==========================================
 
 class User(Base):
     __tablename__ = "users"
+    
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     full_name = Column(String)
     role = Column(Enum(UserRole), nullable=False)
-    reset_token: Column[str] = Column(String, nullable=True)         
-    reset_token_expiry = Column(DateTime, nullable=True) 
+    
+    # Reset Password Tokens
+    reset_token = Column(String, nullable=True)         
+    reset_token_expiry = Column(DateTime(timezone=True), nullable=True) 
+    
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
-    # Relationship to Profile (One-to-One)
+    # Relationships
     profile = relationship("Profile", back_populates="user", uselist=False)
 
 class Profile(Base):
     """
-    Extended user details for Gamification & Impact Tracking.
-    Created automatically when a User is created.
+    Gamification & Impact Tracking.
     """
     __tablename__ = "profiles"
     
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), unique=True, nullable=False)
     
-    carbon_balance = Column(Integer, default=0)    # Credits available to redeem
-    co2_saved = Column(Float, default=0.0)         # Environmental impact (kg)
+    carbon_balance = Column(Integer, default=0)    # Credits available
+    co2_saved = Column(Float, default=0.0)         # Impact in kg
     
     # Relationships
     user = relationship("User", back_populates="profile")
     pickups = relationship("Pickup", back_populates="profile")
+    transactions = relationship("Transaction", back_populates="profile")
+
 
 class Pickup(Base):
     """
-    The core 'Drop' request. 
-    Uses PostGIS for location to enable 'Find nearest driver' queries.
+    The Logistics Ticket. Managed by Drivers.
     """
     __tablename__ = "pickups"
 
@@ -79,55 +97,103 @@ class Pickup(Base):
     profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
     
     status = Column(Enum(PickupStatus), default=PickupStatus.SCHEDULED)
-    pickup_date = Column(Date, nullable=True)  # Optional specific date field
-    timeslot = Column(String, nullable=True)  # e.g., "Morning", "Afternoon"
     
-    # GEO-SPATIAL COLUMN: Stores (Latitude, Longitude) efficiently
-    # Ensure you have 'CREATE EXTENSION postgis;' run in your DB
+    # Scheduling Details
+    pickup_date = Column(Date, nullable=True) 
+    timeslot = Column(String, nullable=True)  # e.g. "Morning (9-12)"
+    
+    # Location (PostGIS)
     location = Column(Geography(geometry_type='POINT', srid=4326), nullable=False)
-    
-    # For address display purposes (optional but helpful)
     address_text = Column(String, nullable=True)
-     # NEW COLUMN
+    
+    # Image Proof (Added recently)
     image_url = Column(String, nullable=True)
-    
-    
+
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     
     # Relationships
     profile = relationship("Profile", back_populates="pickups")
+    
+    # The list of items the user declared (Manifest)
     items = relationship("PickupItem", back_populates="pickup", cascade="all, delete-orphan")
-    inventory_log = relationship("InventoryLog", back_populates="pickup", uselist=False)
+    
+    # The actual inventory records created after collection (Warehouse)
+    inventory_logs = relationship("InventoryLog", back_populates="pickup")
 
 class PickupItem(Base):
     """
-    Individual items within a single Pickup request.
-    Stores a snapshot of the value at the time of booking.
+    The User's Manifest. What they CLAIM they are giving.
     """
     __tablename__ = "pickup_items"
 
     id = Column(Integer, primary_key=True, index=True)
     pickup_id = Column(Integer, ForeignKey("pickups.id"), nullable=False)
     
-    item_name = Column(String, nullable=False)        # e.g., "Dell Laptop"
+    item_name = Column(String, nullable=False)
     detected_condition = Column(Enum(ItemCondition), nullable=False)
-    credit_value = Column(Integer, nullable=False)    # Value awarded for this item
+    credit_value = Column(Integer, nullable=False)
+    description = Column(String, nullable=True)
+    years_used = Column(Integer, nullable=True)
     
     pickup = relationship("Pickup", back_populates="items")
 
 class InventoryLog(Base):
     """
-    Lifecycle tracking for the Collector/Admin side.
+    The Warehouse Inventory.
+    Created automatically when a driver marks a pickup as 'COLLECTED'.
     """
     __tablename__ = "inventory_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    pickup_id = Column(Integer, ForeignKey("pickups.id"), unique=True, nullable=False)
     
-    processing_status = Column(Enum(ProcessingStatus), default=ProcessingStatus.PENDING)
-    warehouse_location = Column(String, nullable=True)
-    certificate_url = Column(String, nullable=True)   # URL to the generated PDF
+    # Link back to the origin pickup for traceability
+    pickup_id = Column(Integer, ForeignKey("pickups.id"))
     
+    # Item Details (Copied from PickupItem)
+    item_name = Column(String)
+    category = Column(String) # e.g. "Laptop", "Smartphone"
+    value = Column(Integer)
+    
+    # Lifecycle Status (Managed by Warehouse)
+    status = Column(Enum(InventoryStatus), default=InventoryStatus.RECEIVED)
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
-    pickup = relationship("Pickup", back_populates="inventory_log")
+    # Relationships
+    pickup = relationship("Pickup", back_populates="inventory_logs")
+
+class Certificate(Base):
+    __tablename__ = "certificates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    unique_code = Column(String, unique=True, index=True) # e.g., CERT-001
+    
+    # Link to the source Pickup
+    pickup_id = Column(Integer, ForeignKey("pickups.id"), nullable=False)
+    
+    # Snapshot of data at time of issuance
+    recipient_name = Column(String) 
+    cert_type = Column(Enum(CertificateType), default=CertificateType.INDIVIDUAL)
+    issue_date = Column(Date, default=func.now())
+    carbon_offset_snapshot = Column(Float)
+    items_count_snapshot = Column(Integer)
+    
+    # Relationship
+    pickup = relationship("Pickup")
+
+# 2. Add Transaction Table
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    profile_id = Column(Integer, ForeignKey("profiles.id"), nullable=False)
+    
+    amount = Column(Integer, nullable=False) # e.g. +500 or -200
+    type = Column(Enum(TransactionType), nullable=False)
+    description = Column(String, nullable=False) # e.g. "Recycled Laptop" or "Amazon Card"
+    
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    
+    profile = relationship("Profile", back_populates="transactions")
+

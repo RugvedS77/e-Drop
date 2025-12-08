@@ -2,9 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, List
+from sqlalchemy import desc
 
 from database.postgresConn import get_db
-from models.all_model import Profile, User, UserRole
+from models.all_model import Profile, User, UserRole, Transaction, TransactionType
+from schemas.all_schema import TransactionResponse
 from auth.oauth2 import get_current_user
 
 router = APIRouter(
@@ -36,71 +38,6 @@ def ensure_collector_role(user: User):
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. Only Collectors (Admins) can manage wallets."
         )
-
-# --- HELPER: Calculate Badge ---
-def calculate_badge(co2_saved: float) -> str:
-    # Logic based on gamification requirements 
-    if co2_saved > 100: return "Earth Guardian"
-    if co2_saved > 50: return "Eco Warrior"
-    if co2_saved > 20: return "Recycling Rookie"
-    return "Green Starter"
-
-# ==========================================
-# USER ROUTES (Read & Redeem)
-# ==========================================
-
-@router.get("/me", response_model=WalletStats)
-def get_my_wallet(
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    READ: Get the logged-in user's carbon wallet stats[cite: 9].
-    """
-    profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
-    
-    if not profile:
-        # Lazy creation if missing
-        profile = Profile(user_id=current_user.id, carbon_balance=0, co2_saved=0.0)
-        db.add(profile)
-        db.commit()
-        db.refresh(profile)
-
-    return {
-        "user_id": profile.user_id,
-        "carbon_balance": profile.carbon_balance,
-        "co2_saved": profile.co2_saved,
-        "badge_level": calculate_badge(profile.co2_saved)
-    }
-
-@router.post("/redeem")
-def redeem_reward(
-    request: RedeemRequest,
-    db: Session = Depends(get_db),
-    current_user: User = Depends(get_current_user)
-):
-    """
-    UPDATE (User): Redeem points for a reward.
-    """
-    profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
-    if not profile:
-        raise HTTPException(status_code=404, detail="Wallet not found")
-
-    if profile.carbon_balance < request.points_cost:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Insufficient funds. You have {profile.carbon_balance} credits."
-        )
-
-    # Deduct Points
-    profile.carbon_balance -= request.points_cost
-    db.commit()
-
-    return {
-        "message": f"Successfully redeemed {request.reward_title}",
-        "remaining_balance": profile.carbon_balance,
-        "badge_level": calculate_badge(profile.co2_saved)
-    }
 
 # ==========================================
 # ADMIN ROUTES (Full CRUD)
@@ -215,3 +152,96 @@ def admin_reset_wallet(
     db.commit()
 
     return {"message": f"Wallet for User {target_user_id} has been reset to 0."}
+# --- HELPER: Calculate Badge ---
+def calculate_badge(co2_saved: float) -> str:
+    if co2_saved > 100: return "Earth Guardian"
+    if co2_saved > 50: return "Eco Warrior"
+    if co2_saved > 20: return "Recycling Rookie"
+    return "Green Starter"
+
+# --- 1. GET TRANSACTION HISTORY ---
+@router.get("/history", response_model=List[TransactionResponse])
+def get_wallet_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    print(f"DEBUG: Fetching history for user {current_user.id}") # DEBUG LOG
+    
+    profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
+    if not profile:
+        return []
+
+    history = db.query(Transaction).filter(
+        Transaction.profile_id == profile.id
+    ).order_by(desc(Transaction.created_at)).all()
+    
+    print(f"DEBUG: Found {len(history)} transactions") # DEBUG LOG
+    return history
+
+# --- 2. GET STATS ---
+@router.get("/me", response_model=WalletStats)
+def get_my_wallet(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
+    
+    if not profile:
+        profile = Profile(user_id=current_user.id, carbon_balance=0, co2_saved=0.0)
+        db.add(profile)
+        db.commit()
+        db.refresh(profile)
+
+    return {
+        "user_id": profile.user_id,
+        "carbon_balance": profile.carbon_balance,
+        "co2_saved": profile.co2_saved,
+        "badge_level": calculate_badge(profile.co2_saved)
+    }
+
+# --- 3. REDEEM REWARD (With Debugging) ---
+@router.post("/redeem")
+def redeem_reward(
+    request: RedeemRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    print(f"DEBUG: Attempting redeem for {current_user.email}") # DEBUG LOG
+
+    profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
+    if not profile:
+        raise HTTPException(status_code=404, detail="Wallet not found")
+
+    if profile.carbon_balance < request.points_cost:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Insufficient funds. You have {profile.carbon_balance} credits."
+        )
+
+    # 1. Deduct Points
+    old_balance = profile.carbon_balance
+    profile.carbon_balance -= request.points_cost
+    print(f"DEBUG: Balance updated {old_balance} -> {profile.carbon_balance}") # DEBUG LOG
+    
+    # 2. CREATE TRANSACTION RECORD
+    print("DEBUG: Creating Transaction Object...") # DEBUG LOG
+    new_txn = Transaction(
+        profile_id=profile.id,
+        amount=-request.points_cost,
+        type=TransactionType.REDEEM,
+        description=f"Redeemed: {request.reward_title}"
+    )
+    
+    db.add(new_txn)
+    print("DEBUG: Transaction added to session") # DEBUG LOG
+    
+    # 3. Commit
+    db.commit()
+    db.refresh(profile)
+    print("DEBUG: Commit Successful") # DEBUG LOG
+
+    return {
+        "message": f"Successfully redeemed {request.reward_title}",
+        "remaining_balance": profile.carbon_balance,
+        "badge_level": calculate_badge(profile.co2_saved)
+    }

@@ -29,24 +29,24 @@ const DropperLogin = () => {
     try {
       await login(email, password);
       
-      // 👇 GET THE FRESH USER STATE
       const user = useAuthStore.getState().user;
       
-      // 👇 ADD THIS LINE AND CHECK YOUR BROWSER CONSOLE (F12)
-      console.log("🛑 DEBUG LOGIN USER:", JSON.stringify(user, null, 2)); 
-      
-      if(user && (user.role === 'dropper')) {
+      // Check Role
+      if(user && (user.role === 'dropper' || user.role === 'Dropper')) {
          navigate("/dropper/dashboard", { replace: true });
       } else {
-         // Show us what the WRONG role was
-         setError(`Access Denied. Your role is: ${user?.role}`);
-         useAuthStore.getState().logout();
+         // 1. Set the error message
+         setError(`Access Denied. Your account is registered as a ${user?.role || 'Unknown'}.`);
+         
+         // 2. Logout WITHOUT redirecting (pass false)
+         // This ensures the session is cleared, but the page stays put
+         useAuthStore.getState().logout(false); 
       }
     } catch (err) {
       setError(err.message || "Invalid credentials");
     }
   };
-
+  
   const handleGoogleLogin = () => {
     // ⬇️ UPDATE: Added ?role=dropper to the URL
     const backendUrl = `${API_BASE_URL}/api/auth/login/google?role=dropper`;
@@ -81,7 +81,7 @@ const DropperLogin = () => {
               <div className="bg-green-600 p-2 rounded-lg group-hover:bg-green-700 transition">
                   <CheckCircle className="h-6 w-6 text-white" />
               </div>
-              <span className="text-2xl font-bold text-gray-800">EcoCycle</span>
+              <span className="text-2xl font-bold text-gray-800">e-Drop</span>
             </Link>
             <p className="text-xs font-semibold text-green-600 tracking-widest uppercase mt-2">Dropper Portal</p>
           </div>

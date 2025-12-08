@@ -74,9 +74,6 @@ export default function CollectorSidebar() {
                     <NavLink to="/collector/certificates" icon={<FileCheck size={20} />}>
                         Certificates
                     </NavLink>
-                    <NavLink to="/collector/users" icon={<Users size={20} />}>
-                        User & Drivers
-                    </NavLink>
                 </div>
             </nav>
 

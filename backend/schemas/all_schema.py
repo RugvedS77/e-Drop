@@ -1,7 +1,7 @@
 # schemas/all_schema.py
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Optional, Any
 from enum import Enum
 
@@ -79,6 +79,8 @@ class PickupItemCreate(BaseModel):
     item_name: str
     detected_condition: ItemConditionEnum
     credit_value: int
+    description: Optional[str] = None
+    years_used: Optional[int] = None
 
 class PickupCreate(BaseModel):
     """Payload for creating a new Drop request"""
@@ -103,6 +105,7 @@ class PickupResponse(BaseModel):
     total_credits: int
     message: str
     model_config = ConfigDict(from_attributes=True)
+    address_text: Optional[str] = None
 
 # --- PROFILE SCHEMAS ---
 
@@ -150,3 +153,63 @@ class AlertRequest(BaseModel):
     driver_name: str
     location_area: str
     target_phone: str # Must be verified on Twilio if using Free Tier
+
+class InventoryStatusUpdate(BaseModel):
+    status: str # received, refurbishing, recycled
+
+class InventoryItemResponse(BaseModel):
+    id: int
+    formatted_id: str 
+    name: str
+    category: str
+    status: str
+    receivedDate: Optional[date]
+    value: int
+    condition: Optional[str] = "Good"
+    customer: str 
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# ===========certificate SCHEMAS ============
+class CertificateCreate(BaseModel):
+    pickup_id: int
+    cert_type: str # 'individual' or 'corporate'
+
+class CertificateResponse(BaseModel):
+    id: str           # Formatted ID (CERT-001)
+    orderId: str      # Formatted Pickup ID (PU-100)
+    customerName: str
+    issueDate: date
+    carbonOffset: float
+    itemsRecycled: int
+    type: str
+    
+    model_config = ConfigDict(from_attributes=True)
+
+# --- NEW: History Specific Schemas ---
+
+class HistoryItem(BaseModel):
+    name: str
+    category: str
+    value: int
+
+class PickupHistoryDetail(BaseModel):
+    id: str             # Formatted ID (RC-2024-001)
+    date: Optional[date]
+    status: str
+    address: str
+    driver: str         # Placeholder name
+    carbonOffset: float
+    points: int
+    items: List[HistoryItem] # Nested list of items
+
+    model_config = ConfigDict(from_attributes=True)
+
+class TransactionResponse(BaseModel):
+    id: int
+    amount: int
+    type: str # earn, redeem
+    description: str
+    created_at: datetime
+    
+    model_config = ConfigDict(from_attributes=True)

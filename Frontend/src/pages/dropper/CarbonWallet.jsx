@@ -4,7 +4,7 @@ import { useAuthStore } from '../../authStore';
 import { 
   Wallet, Leaf, TrendingUp, History, Gift, Wind, 
   TreeDeciduous, ArrowUpRight, ArrowDownLeft, Calendar, 
-  CreditCard, Zap, Loader2
+  CreditCard, Zap, Loader2, PackageCheck
 } from 'lucide-react';
 
 // --- CONFIGURATION ---
@@ -13,13 +13,7 @@ const API_BASE_URL = "http://localhost:8000";
 // --- UTILITY ---
 const cn = (...classes) => classes.filter(Boolean).join(' ');
 
-// --- MOCK CONSTANTS (Backend doesn't provide history yet, so we keep this mock) ---
-const transactions = [
-  { id: 1, type: 'earn', title: 'Recycled MacBook Pro', date: '2025-11-20', amount: 450, status: 'Completed' },
-  { id: 2, type: 'earn', title: 'Recycled iPhone 12', date: '2025-11-18', amount: 320, status: 'Completed' },
-  { id: 3, type: 'spend', title: 'Amazon Gift Card ($10)', date: '2025-11-15', amount: -1000, status: 'Redeemed' },
-];
-
+// --- STATIC REWARDS LIST ---
 const rewardsList = [
   { id: 1, title: '$10 Amazon Voucher', cost: 1000, icon: Gift, description: 'Digital code sent instantly' },
   { id: 2, title: 'Plant a Tree', cost: 500, icon: TreeDeciduous, description: 'Donation to Reforest Now' },
@@ -45,13 +39,17 @@ export default function CarbonWallet() {
   const { user, token } = useAuthStore();
   const [activeTab, setActiveTab] = useState('history');
   
-  // --- STATE FOR REAL DATA ---
+  // --- STATE ---
   const [wallet, setWallet] = useState({
     carbon_balance: 0,
     co2_saved: 0,
     badge_level: "Loading...",
     user_id: null
   });
+  
+  // New State for Real History
+  const [transactions, setTransactions] = useState([]);
+  
   const [loading, setLoading] = useState(true);
   const [processingReward, setProcessingReward] = useState(false);
 
@@ -60,22 +58,35 @@ export default function CarbonWallet() {
     headers: { Authorization: `Bearer ${token}` }
   });
 
-  // 1. Fetch Wallet Data on Mount
-  useEffect(() => {
-    fetchWalletData();
-  }, []);
-
-  const fetchWalletData = async () => {
+  // 1. Fetch Data (Wallet + History)
+  const fetchAllData = async () => {
+    if (!token) return;
+    
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/api/wallet/me`, getAuthHeaders());
-      setWallet(response.data); // Matches Schema: { user_id, carbon_balance, co2_saved, badge_level }
+      
+      // Parallel Request: Get Stats AND History
+      const [walletRes, historyRes] = await Promise.all([
+        axios.get(`${API_BASE_URL}/api/wallet/me`, getAuthHeaders()),
+        axios.get(`${API_BASE_URL}/api/wallet/history`, getAuthHeaders())
+      ]);
+
+      setWallet(walletRes.data);
+      setTransactions(historyRes.data); // Save real history
+      
     } catch (error) {
-      console.error("Error fetching wallet:", error);
+      console.error("Error fetching wallet data:", error);
+      if (error.response?.status === 401) {
+          // Handle token expiry if needed
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    fetchAllData();
+  }, [token]);
 
   // 2. Handle Redeeming Rewards
   const handleRedeem = async (reward) => {
@@ -96,14 +107,18 @@ export default function CarbonWallet() {
       // Call Backend
       const response = await axios.post(`${API_BASE_URL}/api/wallet/redeem`, payload, getAuthHeaders());
       
-      // Update local state with new balance from backend
+      // Update local state immediately
       setWallet(prev => ({
         ...prev,
         carbon_balance: response.data.remaining_balance,
-        badge_level: response.data.badge_level
+        badge_level: response.data.badge_level // Backend returns new badge if changed
       }));
 
       alert(`Success! ${response.data.message}`);
+      
+      // Refresh history to show the new redemption immediately
+      fetchAllData(); 
+
     } catch (error) {
       console.error("Redemption error:", error);
       alert(error.response?.data?.detail || "Failed to redeem reward.");
@@ -112,9 +127,7 @@ export default function CarbonWallet() {
     }
   };
 
-  // Derived calculations for UI
-  // Note: Your backend only sends total CO2 saved. We can estimate trees/energy based on that.
-  // 1 Tree ~ 25kg CO2, 1 kWh ~ 0.4kg CO2
+  // Derived calculations
   const estimatedTrees = Math.floor(wallet.co2_saved / 25);
   const estimatedEnergy = Math.floor(wallet.co2_saved / 0.4);
 
@@ -140,9 +153,8 @@ export default function CarbonWallet() {
         {/* LEFT COLUMN: Main Wallet & Stats */}
         <div className="lg:col-span-2 space-y-6">
           
-          {/* HERO CARD (Light Theme) */}
+          {/* HERO CARD */}
           <div className="relative rounded-3xl bg-white border border-gray-200 p-8 overflow-hidden shadow-lg group">
-            {/* Background Decoration */}
             <div className="absolute top-0 right-0 p-12 opacity-5 pointer-events-none">
                <Leaf size={200} className="text-emerald-900" />
             </div>
@@ -224,43 +236,53 @@ export default function CarbonWallet() {
 
             <div className="p-0">
               {activeTab === 'history' ? (
-                <div className="divide-y divide-gray-100">
-                  {/* Note: Your current backend doesn't support transaction history, so this is static for now */}
-                  <div className="p-3 bg-yellow-50 text-yellow-800 text-xs text-center border-b border-yellow-100">
-                    Showing recent activity (History API coming soon)
-                  </div>
-                  {transactions.map((tx) => (
-                    <div key={tx.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
-                      <div className="flex items-center gap-4">
-                        <div className={cn(
-                          "w-10 h-10 rounded-full flex items-center justify-center shadow-sm border border-gray-100",
-                          tx.type === 'earn' ? "bg-emerald-50 text-emerald-600" : "bg-orange-50 text-orange-600"
-                        )}>
-                          {tx.type === 'earn' ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
-                        </div>
-                        <div>
-                          <p className="font-semibold text-gray-900">{tx.title}</p>
-                          <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
-                             <Calendar size={12} /> {tx.date}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className={cn(
-                          "font-bold text-sm",
-                          tx.type === 'earn' ? "text-emerald-600" : "text-gray-900"
-                        )}>
-                          {tx.type === 'earn' ? '+' : ''}{tx.amount} pts
-                        </p>
-                        <span className={cn(
-                          "inline-block px-2 py-0.5 text-[10px] font-medium rounded-full mt-1 border",
-                          tx.status === 'Completed' ? "bg-green-50 text-green-700 border-green-100" : "bg-gray-50 text-gray-600 border-gray-100"
-                        )}>
-                          {tx.status}
-                        </span>
-                      </div>
+                <div className="divide-y divide-gray-100 max-h-[400px] overflow-y-auto custom-scrollbar">
+                  {loading ? (
+                    <div className="p-8 text-center text-gray-400">Loading history...</div>
+                  ) : transactions.length === 0 ? (
+                    <div className="p-8 text-center">
+                        <PackageCheck className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                        <p className="text-gray-500 font-medium">No transactions yet</p>
+                        <p className="text-xs text-gray-400">Recycle items to earn your first points!</p>
                     </div>
-                  ))}
+                  ) : (
+                    transactions.map((tx) => {
+                        const isEarn = tx.type === 'earn'; 
+                        
+                        return (
+                            <div key={tx.id} className="p-4 flex items-center justify-between hover:bg-gray-50 transition-colors">
+                              <div className="flex items-center gap-4">
+                                <div className={cn(
+                                  "w-10 h-10 rounded-full flex items-center justify-center shadow-sm border border-gray-100",
+                                  isEarn ? "bg-emerald-50 text-emerald-600" : "bg-orange-50 text-orange-600"
+                                )}>
+                                  {isEarn ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
+                                </div>
+                                <div>
+                                  <p className="font-semibold text-gray-900">{tx.description}</p>
+                                  <p className="text-xs text-gray-500 flex items-center gap-1 mt-0.5">
+                                     <Calendar size={12} /> {new Date(tx.created_at).toLocaleDateString()} at {new Date(tx.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                  </p>
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className={cn(
+                                  "font-bold text-sm",
+                                  isEarn ? "text-emerald-600" : "text-gray-900"
+                                )}>
+                                  {isEarn ? '+' : ''}{Math.abs(tx.amount)} pts
+                                </p>
+                                <span className={cn(
+                                  "inline-block px-2 py-0.5 text-[10px] font-medium rounded-full mt-1 border capitalize",
+                                  isEarn ? "bg-green-50 text-green-700 border-green-100" : "bg-orange-50 text-orange-700 border-orange-100"
+                                )}>
+                                  {tx.type}
+                                </span>
+                              </div>
+                            </div>
+                        );
+                    })
+                  )}
                 </div>
               ) : (
                 <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">

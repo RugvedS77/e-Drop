@@ -44,7 +44,15 @@ def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
         )
-    access_token = token.create_access_token(data={"sub": user.email})
+    
+    # --- FIX START: Include 'role' and 'user_id' in the token ---
+    # This ensures the frontend knows the role immediately after login
+    access_token = token.create_access_token(data={
+        "sub": user.email,
+        "user_id": user.id,
+        "role": user.role.value if hasattr(user.role, 'value') else user.role
+    })
+    # --- FIX END ---
   
     # Ensure profile exists (Edge case for legacy users)
     # if not user.profile: create_profile_for_user(db, user.id)

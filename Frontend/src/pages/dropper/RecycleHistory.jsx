@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import axios from 'axios';
 import { 
   History, 
-  Filter, 
   Search, 
   Calendar,
   Package,
@@ -12,22 +12,23 @@ import {
   ChevronDown,
   Eye,
   RefreshCw,
-  MapPin,
-  ArrowRight
+  MapPin
 } from 'lucide-react';
+import { useAuthStore } from '../../authStore';
+
+// --- CONFIGURATION ---
+const API_BASE_URL = "http://localhost:8000"; 
 
 // --- UTILITY ---
 const cn = (...classes) => classes.filter(Boolean).join(' ');
 
 // --- INLINE COMPONENTS ---
-
-// 1. Badge Component
 const Badge = ({ children, variant, icon: Icon }) => {
   const styles = {
-    success: "bg-emerald-100 text-emerald-700 border-emerald-200", // Completed
-    warning: "bg-amber-100 text-amber-700 border-amber-200",       // In Transit
-    info: "bg-blue-100 text-blue-700 border-blue-200",             // Scheduled
-    error: "bg-red-100 text-red-700 border-red-200",               // Cancelled
+    completed: "bg-emerald-100 text-emerald-700 border-emerald-200", 
+    'in-transit': "bg-amber-100 text-amber-700 border-amber-200",      
+    scheduled: "bg-blue-100 text-blue-700 border-blue-200",            
+    cancelled: "bg-red-100 text-red-700 border-red-200",              
     default: "bg-gray-100 text-gray-700 border-gray-200"
   };
   return (
@@ -38,7 +39,6 @@ const Badge = ({ children, variant, icon: Icon }) => {
   );
 };
 
-// 2. Modal Component
 const Modal = ({ isOpen, onClose, title, children }) => {
   if (!isOpen) return null;
   return (
@@ -56,80 +56,21 @@ const Modal = ({ isOpen, onClose, title, children }) => {
   );
 };
 
-// --- DATA ---
-const mockPickups = [
-  {
-    id: 'RC-2024-001',
-    date: '2024-01-15',
-    items: [
-      { name: 'MacBook Pro 2019', category: 'Laptop', value: 450 },
-      { name: 'iPhone 12', category: 'Smartphone', value: 280 },
-    ],
-    status: 'completed',
-    driver: 'John D.',
-    carbonOffset: 5.2,
-    points: 350,
-    address: '123 Green Street, Eco City',
-  },
-  {
-    id: 'RC-2024-002',
-    date: '2024-01-20',
-    items: [
-      { name: 'Dell Monitor 27"', category: 'Monitor', value: 80 },
-    ],
-    status: 'in-transit',
-    driver: 'Sarah M.',
-    carbonOffset: 2.1,
-    points: 120,
-    address: '456 Recycle Ave, Green Town',
-  },
-  {
-    id: 'RC-2024-003',
-    date: '2024-01-22',
-    items: [
-      { name: 'Samsung Galaxy S21', category: 'Smartphone', value: 200 },
-      { name: 'iPad Air', category: 'Tablet', value: 180 },
-    ],
-    status: 'scheduled',
-    carbonOffset: 3.8,
-    points: 280,
-    address: '789 Earth Blvd, Sustainable City',
-  },
-  {
-    id: 'RC-2024-004',
-    date: '2024-01-10',
-    items: [
-      { name: 'HP Laptop', category: 'Laptop', value: 150 },
-    ],
-    status: 'cancelled',
-    carbonOffset: 0,
-    points: 0,
-    address: '321 Cancel Lane, Nowhere',
-  },
-  {
-    id: 'RC-2024-005',
-    date: '2024-01-08',
-    items: [
-      { name: 'LG TV 55"', category: 'Television', value: 200 },
-      { name: 'PS4 Console', category: 'Gaming', value: 120 },
-    ],
-    status: 'completed',
-    driver: 'Mike T.',
-    carbonOffset: 8.5,
-    points: 420,
-    address: '555 Complete Road, Done City',
-  },
-];
-
 const statusConfig = {
-  scheduled: { icon: Calendar, color: 'info', label: 'Scheduled' },
-  'in-transit': { icon: Truck, color: 'warning', label: 'In Transit' },
-  completed: { icon: CheckCircle, color: 'success', label: 'Completed' },
-  cancelled: { icon: XCircle, color: 'error', label: 'Cancelled' },
+  SCHEDULED: { icon: Calendar, color: 'scheduled', label: 'Scheduled' },
+  'IN-TRANSIT': { icon: Truck, color: 'in-transit', label: 'In Transit' },
+  COLLECTED: { icon: CheckCircle, color: 'completed', label: 'Completed' },
+  CANCELLED: { icon: XCircle, color: 'cancelled', label: 'Cancelled' },
+  // Fallbacks for lowercase from legacy data
+  scheduled: { icon: Calendar, color: 'scheduled', label: 'Scheduled' },
+  'in-transit': { icon: Truck, color: 'in-transit', label: 'In Transit' },
+  completed: { icon: CheckCircle, color: 'completed', label: 'Completed' },
+  cancelled: { icon: XCircle, color: 'cancelled', label: 'Cancelled' },
 };
 
 // --- MAIN COMPONENT ---
 export default function RecycleHistory() {
+  const { token } = useAuthStore();
   const [loading, setLoading] = useState(true);
   const [pickups, setPickups] = useState([]);
   const [selectedPickup, setSelectedPickup] = useState(null);
@@ -137,19 +78,42 @@ export default function RecycleHistory() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // 1. FETCH API
   useEffect(() => {
-    // Simulate loading
-    const timer = setTimeout(() => {
-      setPickups(mockPickups);
-      setLoading(false);
-    }, 1000);
-    return () => clearTimeout(timer);
-  }, []);
+    const fetchHistory = async () => {
+      if (!token) return;
+      
+      try {
+        setLoading(true);
+        const res = await axios.get(
+          `${API_BASE_URL}/api/pickups/history`, 
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        // Ensure data is array to prevent crashes
+        setPickups(Array.isArray(res.data) ? res.data : []);
+      } catch (err) {
+        console.error("Failed to fetch history", err);
+        setPickups([]); 
+      } finally {
+        setLoading(false);
+      }
+    };
 
+    fetchHistory();
+  }, [token]);
+
+  // 2. FILTER LOGIC (FIXED)
   const filteredPickups = pickups.filter(pickup => {
     const matchesStatus = statusFilter === 'all' || pickup.status === statusFilter;
-    const matchesSearch = pickup.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      pickup.items.some(item => item.name.toLowerCase().includes(searchQuery.toLowerCase()));
+    
+    // FIX: Convert ID to string safely before toLowerCase()
+    const pickupIdStr = String(pickup.id); 
+    const query = searchQuery.toLowerCase();
+
+    const matchesSearch = 
+        pickupIdStr.includes(query) ||
+        (pickup.items && pickup.items.some(item => (item.item || item.item_name || '').toLowerCase().includes(query)));
+        
     return matchesStatus && matchesSearch;
   });
 
@@ -175,16 +139,17 @@ export default function RecycleHistory() {
         
         {/* Stats Summary Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {Object.entries(statusConfig).map(([status, config]) => {
+          {['SCHEDULED', 'IN-TRANSIT', 'COLLECTED', 'CANCELLED'].map((status) => {
+            const config = statusConfig[status];
             const count = pickups.filter(p => p.status === status).length;
-            const Icon = config.icon;
+            const Icon = config?.icon || Package;
             
-            // Dynamic styles based on status for the icon container
+            // Dynamic styles
             const iconStyles = {
-              success: "bg-emerald-100 text-emerald-600",
-              warning: "bg-amber-100 text-amber-600",
-              info: "bg-blue-100 text-blue-600",
-              error: "bg-red-100 text-red-600"
+              completed: "bg-emerald-100 text-emerald-600",
+              'in-transit': "bg-amber-100 text-amber-600",
+              scheduled: "bg-blue-100 text-blue-600",
+              cancelled: "bg-red-100 text-red-600"
             };
 
             return (
@@ -198,13 +163,13 @@ export default function RecycleHistory() {
               >
                 <div className={cn(
                     'w-12 h-12 rounded-lg flex items-center justify-center transition-transform group-hover:scale-110',
-                    iconStyles[config.color]
+                    iconStyles[config?.color] || "bg-gray-100 text-gray-600"
                   )}>
                   <Icon className="w-6 h-6" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold text-gray-900">{count}</p>
-                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{config.label}</p>
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wide">{config?.label || status}</p>
                 </div>
               </button>
             );
@@ -230,8 +195,8 @@ export default function RecycleHistory() {
               className="w-full appearance-none px-4 py-2.5 pr-10 rounded-lg bg-gray-50 border border-gray-200 text-gray-900 focus:border-emerald-500 outline-none cursor-pointer"
             >
               <option value="all">All Statuses</option>
-              {Object.entries(statusConfig).map(([status, config]) => (
-                <option key={status} value={status}>{config.label}</option>
+              {['SCHEDULED', 'IN-TRANSIT', 'COLLECTED', 'CANCELLED'].map((status) => (
+                <option key={status} value={status}>{statusConfig[status]?.label || status}</option>
               ))}
             </select>
             <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 pointer-events-none" />
@@ -248,7 +213,6 @@ export default function RecycleHistory() {
                   <th className="text-left p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
                   <th className="text-left p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Items</th>
                   <th className="text-left p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
-                  <th className="text-left p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Carbon Offset</th>
                   <th className="text-left p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Points</th>
                   <th className="text-right p-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
@@ -258,14 +222,14 @@ export default function RecycleHistory() {
                   // Simple Loading State
                   Array.from({ length: 5 }).map((_, i) => (
                     <tr key={i}>
-                      <td colSpan={7} className="p-4">
+                      <td colSpan={6} className="p-4">
                         <div className="h-8 bg-gray-100 rounded animate-pulse"></div>
                       </td>
                     </tr>
                   ))
                 ) : filteredPickups.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="p-12 text-center">
+                    <td colSpan={6} className="p-12 text-center">
                       <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                         <Package className="w-8 h-8 text-gray-400" />
                       </div>
@@ -275,45 +239,42 @@ export default function RecycleHistory() {
                   </tr>
                 ) : (
                   filteredPickups.map((pickup) => {
-                    const StatusIcon = statusConfig[pickup.status].icon;
+                    const StatusIcon = statusConfig[pickup.status]?.icon || Clock;
+                    // Safely handle date
+                    const dateDisplay = pickup.pickup_date 
+                        ? new Date(pickup.pickup_date).toLocaleDateString() 
+                        : (pickup.created_at ? new Date(pickup.created_at).toLocaleDateString() : 'Date Pending');
+
                     return (
                       <tr
                         key={pickup.id}
                         className="hover:bg-gray-50 transition-colors group"
                       >
                         <td className="p-4">
-                          <span className="font-mono text-sm font-medium text-gray-900">{pickup.id}</span>
+                          <span className="font-mono text-sm font-medium text-gray-900">#{pickup.id}</span>
                         </td>
                         <td className="p-4">
                           <div className="flex items-center gap-2 text-sm text-gray-600">
                             <Calendar className="w-4 h-4 text-gray-400" />
-                            {new Date(pickup.date).toLocaleDateString()}
+                            {dateDisplay}
                           </div>
                         </td>
                         <td className="p-4">
                           <div className="flex flex-col">
-                            <span className="text-sm font-medium text-gray-900">{pickup.items.length} item(s)</span>
-                            <span className="text-xs text-gray-500">
-                              Est. Value: ${pickup.items.reduce((sum, item) => sum + item.value, 0)}
-                            </span>
+                            <span className="text-sm font-medium text-gray-900">{pickup.items?.length || 0} item(s)</span>
                           </div>
                         </td>
                         <td className="p-4">
                           <Badge
-                            variant={statusConfig[pickup.status].color}
+                            variant={statusConfig[pickup.status]?.color || 'default'}
                             icon={StatusIcon}
                           >
-                            {statusConfig[pickup.status].label}
+                            {statusConfig[pickup.status]?.label || pickup.status}
                           </Badge>
                         </td>
                         <td className="p-4">
-                          <span className="text-emerald-600 font-semibold text-sm bg-emerald-50 px-2 py-1 rounded">
-                            {pickup.carbonOffset > 0 ? `${pickup.carbonOffset} kg` : '-'}
-                          </span>
-                        </td>
-                        <td className="p-4">
-                          <span className="font-bold text-gray-900">
-                            {pickup.points > 0 ? `+${pickup.points}` : '-'}
+                          <span className="font-bold text-green-600">
+                            +{pickup.total_credits || 0} pts
                           </span>
                         </td>
                         <td className="p-4 text-right">
@@ -339,104 +300,60 @@ export default function RecycleHistory() {
       <Modal
         isOpen={showDetailsModal}
         onClose={() => setShowDetailsModal(false)}
-        title={`Request Details: ${selectedPickup?.id}`}
+        title={`Request Details: #${selectedPickup?.id}`}
       >
         {selectedPickup && (
           <div className="space-y-8">
-            {/* Status Timeline */}
-            <div>
-               <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-4">Request Status</h4>
-               <div className="flex items-center justify-between relative">
-                {/* Connecting Line */}
-                <div className="absolute top-5 left-0 w-full h-1 bg-gray-100 -z-10"></div>
-                
-                {['scheduled', 'in-transit', 'completed'].map((step, index) => {
-                    const stepIndex = ['scheduled', 'in-transit', 'completed'].indexOf(selectedPickup.status);
-                    const isActive = index <= stepIndex;
-                    const isCurrent = index === stepIndex;
-                    
-                    const StepIcon = statusConfig[step]?.icon || Clock;
-                    
-                    return (
-                    <div key={step} className="flex flex-col items-center gap-2 bg-white px-2">
-                        <div
-                        className={cn(
-                            'w-10 h-10 rounded-full flex items-center justify-center border-2 transition-all',
-                            isActive ? 'bg-emerald-600 border-emerald-600 text-white shadow-lg shadow-emerald-200' : 'bg-white border-gray-300 text-gray-400'
-                        )}
-                        >
-                        <StepIcon className="w-5 h-5" />
-                        </div>
-                        <span className={cn(
-                            "text-xs font-medium capitalize",
-                            isCurrent ? "text-emerald-700 font-bold" : "text-gray-500"
-                        )}>
-                            {step.replace('-', ' ')}
-                        </span>
-                    </div>
-                    );
-                })}
-               </div>
-            </div>
-
+            
             {/* Info Grid */}
             <div className="grid grid-cols-2 gap-4">
               <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
                 <div className="flex items-center gap-2 mb-1 text-gray-500">
-                    <Calendar size={14} /> <span className="text-xs uppercase font-semibold">Date</span>
+                    <Calendar size={14} /> <span className="text-xs uppercase font-semibold">Scheduled Date</span>
                 </div>
-                <p className="font-semibold text-gray-900">{new Date(selectedPickup.date).toLocaleDateString()}</p>
+                <p className="font-semibold text-gray-900">
+                    {selectedPickup.pickup_date ? new Date(selectedPickup.pickup_date).toLocaleDateString() : 'Date Pending'}
+                </p>
               </div>
               <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
                  <div className="flex items-center gap-2 mb-1 text-gray-500">
-                    <Truck size={14} /> <span className="text-xs uppercase font-semibold">Driver</span>
+                    <Clock size={14} /> <span className="text-xs uppercase font-semibold">Time Slot</span>
                 </div>
-                <p className="font-semibold text-gray-900">{selectedPickup.driver || 'Pending Assignment'}</p>
-              </div>
-              <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
-                 <div className="flex items-center gap-2 mb-1 text-emerald-700">
-                    <RefreshCw size={14} /> <span className="text-xs uppercase font-semibold">Carbon Offset</span>
-                </div>
-                <p className="font-bold text-emerald-700 text-lg">{selectedPickup.carbonOffset} kg CO2</p>
+                <p className="font-semibold text-gray-900">{selectedPickup.timeslot || 'Any Time'}</p>
               </div>
               <div className="p-4 rounded-xl bg-gray-50 border border-gray-200">
                  <div className="flex items-center gap-2 mb-1 text-gray-500">
                     <CheckCircle size={14} /> <span className="text-xs uppercase font-semibold">Points Earned</span>
                 </div>
-                <p className="font-bold text-gray-900 text-lg">+{selectedPickup.points}</p>
+                <p className="font-bold text-green-600 text-lg">+{selectedPickup.total_credits}</p>
               </div>
-            </div>
-
-            {/* Address */}
-            <div className="flex items-start gap-3 p-4 rounded-xl bg-blue-50 border border-blue-100 text-blue-900">
-               <MapPin className="w-5 h-5 text-blue-600 mt-0.5" />
-               <div>
-                  <h5 className="font-semibold text-sm">Pickup Address</h5>
-                  <p className="text-sm opacity-80">{selectedPickup.address}</p>
-               </div>
             </div>
 
             {/* Items List */}
             <div>
               <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Recycled Items</h4>
               <div className="space-y-2">
-                {selectedPickup.items.map((item, index) => (
-                  <div
-                    key={index}
-                    className="flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:border-emerald-200 hover:bg-emerald-50/30 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-500">
-                            <Package size={16} />
+                {selectedPickup.items && selectedPickup.items.length > 0 ? (
+                    selectedPickup.items.map((item, index) => (
+                    <div
+                        key={index}
+                        className="flex items-center justify-between p-3 rounded-lg border border-gray-100 hover:border-emerald-200 hover:bg-emerald-50/30 transition-colors"
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded bg-gray-100 flex items-center justify-center text-gray-500">
+                                <Package size={16} />
+                            </div>
+                            <div>
+                                <p className="font-medium text-gray-900 text-sm">{item.item || item.item_name}</p>
+                                <p className="text-xs text-gray-500 capitalize">{item.condition}</p>
+                            </div>
                         </div>
-                        <div>
-                            <p className="font-medium text-gray-900 text-sm">{item.name}</p>
-                            <p className="text-xs text-gray-500">{item.category}</p>
-                        </div>
+                        <p className="font-medium text-emerald-600 text-sm">${item.estimated_value}</p>
                     </div>
-                    <p className="font-medium text-emerald-600 text-sm">${item.value}</p>
-                  </div>
-                ))}
+                    ))
+                ) : (
+                    <p className="text-sm text-gray-500 italic">Item details unavailable.</p>
+                )}
               </div>
             </div>
 

@@ -31,11 +31,15 @@ const CollectorLogin = () => {
       
       const user = useAuthStore.getState().user;
       
-      if(user && user.role === 'collector') {
+      // Check Role
+      if(user && (user.role === 'collector' || user.role === 'Collector')) {
          navigate("/collector/dashboard", { replace: true });
       } else {
+         // 1. Set Error
          setError("Access Denied. You are not an authorized Collector.");
-         useAuthStore.getState().logout();
+         
+         // 2. Logout WITHOUT redirecting
+         useAuthStore.getState().logout(false);
       }
     } catch (err) {
       setError(err.message || "Invalid credentials");
@@ -76,7 +80,7 @@ const CollectorLogin = () => {
               <div className="bg-gray-800 p-2 rounded-lg group-hover:bg-black transition">
                   <Truck className="h-6 w-6 text-white" />
               </div>
-              <span className="text-2xl font-bold text-gray-800">EcoCycle</span>
+              <span className="text-2xl font-bold text-gray-800">e-Drop</span>
             </Link>
             <p className="text-xs font-semibold text-gray-600 tracking-widest uppercase mt-2">Collector / Partner Portal</p>
           </div>

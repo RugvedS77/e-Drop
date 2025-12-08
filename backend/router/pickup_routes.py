@@ -1,17 +1,27 @@
 # routers/pickup_routes.py
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
-from datetime import datetime, time  # <--- CHANGED: Added 'time' here
+from datetime import datetime, time
 import os
+from typing import List, Optional
 
 # Import your setup
 from database.postgresConn import get_db
 from models.all_model import Pickup, PickupItem, Profile, User, PickupStatus, UserRole
-from schemas.all_schema import ScanResponse, DetectedItem, PickupCreate, PickupResponse, ItemConditionEnum
+# Updated imports: PickupHistoryDetail/HistoryItem might not be needed anymore, 
+# but I kept them just in case. The key imports here are ScanResponse, PickupResponse, DetectedItem
+from schemas.all_schema import (
+    ScanResponse, 
+    DetectedItem, 
+    PickupCreate, 
+    PickupResponse, 
+    ItemConditionEnum, 
+    PickupHistoryDetail, 
+    HistoryItem
+)
 from auth.oauth2 import get_current_user
 from ml_engine.detector import detector
-# from oauth2 import get_current_user # Un-comment this when you have auth setup
 from utils.supabase_storage import upload_file_to_supabase
 from utils.sms_utils import send_sms_alert
 
@@ -43,15 +53,14 @@ PRICE_LIST = {
 }
 
 def ensure_dropper_role(user: User):
-    """Ensures only Collectors can access these routes."""
+    """Ensures only Droppers (Users) can access these routes."""
     if user.role != UserRole.dropper:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied. Only dropper can perform this action."
         )
-    
+
 # --- 1. AI SCANNING ENDPOINT ---
-# Corresponds to "The AI Detection Endpoint" in PDF 
 @router.post("/scan", response_model=ScanResponse)
 async def predict_ewaste(file: UploadFile = File(...),
                          db: Session = Depends(get_db),
@@ -61,8 +70,6 @@ async def predict_ewaste(file: UploadFile = File(...),
     user_profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
     
     if not user_profile:
-        # If profile missing (rare edge case), create one or raise error
-        # For now, we raise error to keep data clean
         raise HTTPException(
             status_code=404, 
             detail="User profile not found. Please contact support."
@@ -75,25 +82,21 @@ async def predict_ewaste(file: UploadFile = File(...),
         # 2. Read and Predict
         contents = await file.read()
 
-        # --- NEW: Upload to Supabase ---
-        # We upload immediately so we can show the user what they scanned 
-        # and keep the URL for the next step.
-        
+        # --- Upload to Supabase ---
         uploaded_url = upload_file_to_supabase(
             file_bytes=contents, 
             file_name=file.filename, 
             content_type=file.content_type
         )
         
-        # --- YOUR AI PREDICTION CALL ---
+        # --- AI PREDICTION CALL ---
         detections = await detector.predict(contents)
     
-        
         # 3. Handle AI Errors
         if isinstance(detections, dict) and "error" in detections:
              raise HTTPException(status_code=502, detail=detections["error"])
             
-        # 4. MAP RAW DATA TO SCHEMA (The Fix)
+        # 4. MAP RAW DATA TO SCHEMA
         mapped_items = []
         total_credits = 0
 
@@ -106,11 +109,10 @@ async def predict_ewaste(file: UploadFile = File(...),
 
             confidence = obj.get("confidence", 0.0)
 
-            # Assign Value (Look up in dict, default to 10 if not found)
+            # Assign Value
             value = PRICE_LIST.get(item_name.lower(), 10)
             
-            # Assign Condition (Mock logic: High confidence = Good condition)
-            # In the future, you can train a second model to detect 'scratches'
+            # Assign Condition
             condition = ItemConditionEnum.WORKING
             if confidence < 0.6:
                 condition = ItemConditionEnum.SCRAP
@@ -128,7 +130,7 @@ async def predict_ewaste(file: UploadFile = File(...),
             mapped_items.append(detected_item)
             total_credits += value
 
-        # 5. Return the exact structure defined in ScanResponse
+        # 5. Return Response
         return {
             "detected_items": mapped_items,
             "total_estimated_credits": total_credits,
@@ -139,8 +141,8 @@ async def predict_ewaste(file: UploadFile = File(...),
         raise HTTPException(status_code=500, detail=f"Processing error: {str(e)}")
 
 
-# --- THE BOOKING ENDPOINT (UPDATED WITH TWILIO) ---
-@router.post("/create", response_model= PickupResponse, status_code=status.HTTP_201_CREATED)
+# --- 2. BOOKING ENDPOINT ---
+@router.post("/create", response_model=PickupResponse, status_code=status.HTTP_201_CREATED)
 def create_pickup(
     pickup_data: PickupCreate,
     db: Session = Depends(get_db),
@@ -199,16 +201,17 @@ def create_pickup(
             pickup_id=new_pickup.id,
             item_name=item.item_name,
             detected_condition=item.detected_condition,
-            credit_value=item.credit_value
+            credit_value=item.credit_value,
+            description=item.description, 
+            years_used=item.years_used
         )
         db.add(new_item)
         final_credit_total += item.credit_value
-        # Add to summary string like "Laptop (working)"
         item_summary_list.append(f"{item.item_name} ({item.detected_condition.value})")
 
     db.commit()
 
-    # --- 5. TWILIO NOTIFICATION (NEW LOGIC) ---
+    # --- 5. TWILIO NOTIFICATION ---
     try:
         # Construct message components
         items_str = ", ".join(item_summary_list)
@@ -234,28 +237,66 @@ def create_pickup(
             print("⚠️ Skipping SMS: MASTER_COLLECTOR_PHONE not set in .env")
             
     except Exception as e:
-        # We log the error but DO NOT crash the request. 
-        # The user's pickup is saved successfully, even if SMS fails.
         print(f"❌ SMS Notification Failed: {str(e)}")
-
-    hour_offset = 9 # Default to 9 AM (Morning)
-    if new_pickup.timeslot and "Afternoon" in new_pickup.timeslot:
-        hour_offset = 13 # 1 PM
-    elif new_pickup.timeslot and "Evening" in new_pickup.timeslot:
-        hour_offset = 17 # 5 PM
-
-    # datetime.combine merges the Date object from DB with our calculated Time object
-    real_scheduled_time = datetime.combine(new_pickup.pickup_date, time(hour_offset, 0))
-
 
     # 6. Return Success Response
     return PickupResponse(
         id=new_pickup.id,
         status=new_pickup.status,
-        # scheduled_time=real_scheduled_time, # Now passing a valid datetime object
         pickup_date=new_pickup.pickup_date,
         timeslot=new_pickup.timeslot,
         total_credits=final_credit_total,
         message="Pickup scheduled! A Collector has been notified.",
         image_url=new_pickup.image_url
     )
+
+
+# --- 3. UPDATED HISTORY ENDPOINT ---
+# Replaces the old PickupHistoryDetail logic with PickupResponse logic
+@router.get("/history", response_model=List[PickupResponse])
+def get_pickup_history(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Fetch history with eager loading to ensure credits and items are calculated.
+    Returns the standard PickupResponse format used in other parts of the app.
+    """
+    ensure_dropper_role(current_user)
+    
+    user_profile = db.query(Profile).filter(Profile.user_id == current_user.id).first()
+    if not user_profile:
+        return []
+
+    # FIX: Use .options(joinedload(Pickup.items)) to actually get the items for credit calculation
+    pickups = db.query(Pickup).options(joinedload(Pickup.items)).filter(
+        Pickup.profile_id == user_profile.id
+    ).order_by(Pickup.id.desc()).limit(10).all()
+
+    response_list = []
+    for p in pickups:
+        # Calculate total value
+        total_val = sum(item.credit_value for item in p.items)
+        
+        # Determine the best date to show
+        display_date = p.pickup_date if p.pickup_date else p.created_at.date()
+
+        response_list.append(PickupResponse(
+            id=p.id,
+            status=p.status,
+            pickup_date=display_date,
+            timeslot=p.timeslot,
+            total_credits=total_val,
+            message="History Record",
+            image_url=p.image_url,
+            items=[
+                DetectedItem(
+                    item=i.item_name, 
+                    condition=i.detected_condition, 
+                    estimated_value=i.credit_value,
+                    confidence=1.0 
+                ) for i in p.items
+            ]
+        ))
+        
+    return response_list
